@@ -1,0 +1,11 @@
+# Shared configuration for relay server.
+# Command-line arguments override values in this file.
+
+relay:
+  #cpms: "wss://cpms.example.com/ws/webSocket"
+  #ocpp_host: null
+  #ocpp_port: 8500
+  #snoop_host: "localhost"
+  #snoop_port: 8501
+  #ssl_cert: "/path/to/cert.pem"
+  #ssl_key: "/path/to/key.pem"
