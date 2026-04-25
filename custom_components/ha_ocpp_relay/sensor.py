@@ -6,6 +6,7 @@ from datetime import datetime
 import logging
 
 from homeassistant.components.sensor import SensorEntity
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -59,7 +60,8 @@ async def async_setup_entry(
     )
 
 
-class OCPPSensorEntity(SensorEntity):
+
+class OCPPSensorEntity(SensorEntity, RestoreEntity):
     _attr_has_entity_name = True
 
     def __init__(self, entry: ConfigEntry, client: OCPPSnoopClient, unique_id: str) -> None:
@@ -68,13 +70,14 @@ class OCPPSensorEntity(SensorEntity):
         self._client = client
         self._ocpp_unique_id = unique_id
         self._unsub = None
+        self._restored_value = None
 
         sensor = self._client.sensors[self._ocpp_unique_id]
         self._attr_unique_id = f"{self._entry.entry_id}_{sensor.unique_id}"
         self._attr_name = sensor.name
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to per-entry sensor update events."""
+        """Subscribe to per-entry sensor update events and restore state for energy sensors."""
         @callback
         def _on_update(unique_id: str) -> None:
             """Write HA state when this entity's backing sensor changes."""
@@ -86,6 +89,13 @@ class OCPPSensorEntity(SensorEntity):
             f"{SIGNAL_SENSOR_UPDATE}_{self._entry.entry_id}",
             _on_update,
         )
+
+        # Restore last state for energy sensors
+        sensor = self._client.sensors.get(self._ocpp_unique_id)
+        if sensor and sensor.device_class == "energy":
+            last_state = await self.async_get_last_state()
+            if last_state and last_state.state not in (None, "unknown", "unavailable"):
+                self._restored_value = last_state.state
 
     async def async_will_remove_from_hass(self) -> None:
         """Disconnect dispatcher subscriptions before entity removal."""
@@ -104,9 +114,16 @@ class OCPPSensorEntity(SensorEntity):
 
         Timestamp sensors are parsed to datetime; numeric measurements are
         converted to float so recorder/statistics treat them correctly.
+        For energy sensors, restore last value if integration is not running.
         """
         sensor = self._sensor
         if sensor is None:
+            # Only restore for energy sensors
+            if self.device_class == "energy" and self._restored_value is not None:
+                try:
+                    return float(self._restored_value)
+                except (TypeError, ValueError):
+                    return self._restored_value
             return None
 
         if sensor.device_class == "timestamp" and sensor.value:
@@ -122,6 +139,15 @@ class OCPPSensorEntity(SensorEntity):
                 return None
 
         return sensor.value
+    @property
+    def available(self) -> bool:
+        """Energy sensors are always available (show last value); others use default logic."""
+        sensor = self._sensor
+        if self.device_class == "energy":
+            # Always available if we have a value (live or restored)
+            return sensor is not None or self._restored_value is not None
+        # Default: available if sensor is present
+        return sensor is not None
 
     @property
     def native_unit_of_measurement(self):

@@ -111,6 +111,22 @@ class OCPPFilter:
         topic = f"{evse_id}/{location}/{value_type}"
         unique_id = f"OCPP_{cp_id}_{topic}".replace("/", "_")
 
+        # Map W/Wh to kW/kWh, convert value, update unit and name
+        orig_unit = unit
+        orig_value = value
+        if unit == "W":
+            unit = "kW"
+            try:
+                value = float(value) / 1000
+            except (TypeError, ValueError):
+                pass
+        elif unit == "Wh":
+            unit = "kWh"
+            try:
+                value = float(value) / 1000
+            except (TypeError, ValueError):
+                pass
+
         if not evse_id:
             name = f"{value_type.replace('-', ' ')} {location} CP {cp_id}"
         else:
