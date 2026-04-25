@@ -1,30 +1,32 @@
-"""Local relay supervisor and embedded relay/snoop websocket server implementations."""
+"""Shared relay and snoop websocket server core used by HA and standalone entrypoints."""
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 import websockets
 
-from .const import (
-    CONF_CPMS_URL,
-    CONF_RELAY_OCPP_HOST,
-    CONF_RELAY_OCPP_PORT,
-    CONF_RELAY_SNOOP_HOST,
-    CONF_RELAY_SNOOP_PORT,
-)
+
+def basic_auth_header(username: str, password: str) -> tuple[str, str]:
+    """Build an HTTP Basic auth header tuple for websocket upgrade requests."""
+    user_pass = f"{username}:{password}"
+    basic_credentials = base64.b64encode(user_pass.encode()).decode()
+    return ("Authorization", f"Basic {basic_credentials}")
 
 
 @dataclass
 class MessageData:
-    event: str
-    sender: str
+    """Message passed on the relay snoop stream."""
+
+    event: Literal["Connection", "Disconnection", "Message"]
+    sender: Literal["CP", "CSMS"]
     protocol: str | None = None
     cp_id: str | None = None
     payload: Any = field(default_factory=dict)
@@ -34,15 +36,19 @@ class MessageData:
 
 
 class SnoopWebSocketServer:
+    """Forward all snoop queue messages to each connected client."""
+
     def __init__(self, snoop_queue: asyncio.Queue) -> None:
+        if snoop_queue is None:
+            raise ValueError("snoop_queue must be set")
         self._logger = logging.getLogger(__name__)
         self._snoop_queue = snoop_queue
         self._snoop_sockets: set = set()
         self._forward_task: asyncio.Task | None = None
 
-    async def start(self, host: str, port: int):
+    async def start(self, host: str, port: int, ssl_context=None):
         self._forward_task = asyncio.create_task(self._forward_messages())
-        server = await websockets.serve(self._on_connect, host, port)
+        server = await websockets.serve(self._on_connect, host, port, ssl=ssl_context)
         self._logger.info("Snoop server started on %s:%s", host, port)
         return server
 
@@ -70,20 +76,32 @@ class SnoopWebSocketServer:
         try:
             while True:
                 await ws.recv()
-        except websockets.exceptions.ConnectionClosed:
+        except (websockets.exceptions.ConnectionClosed, websockets.exceptions.ConnectionClosedOK):
             self._logger.info("Snoop connection closed")
         finally:
             self._snoop_sockets.discard(ws)
 
 
 class OCPPRelay:
-    def __init__(self, csms_url: str, snoop_queue: asyncio.Queue) -> None:
+    """WebSocket relay that forwards messages between CP and CSMS."""
+
+    def __init__(
+        self,
+        csms_url: str,
+        csms_id: str | None = None,
+        csms_pass: str | None = None,
+        snoop_queue: asyncio.Queue | None = None,
+    ) -> None:
+        if not csms_url:
+            raise ValueError("csms_url must not be empty")
         self._logger = logging.getLogger(__name__)
         self._csms_url = csms_url
+        self._csms_id = csms_id
+        self._csms_pass = csms_pass
         self._snoop_queue = snoop_queue
 
-    async def start(self, host: str, port: int):
-        server = await websockets.serve(self._on_connect, host, port)
+    async def start(self, host: str, port: int, ssl_context=None):
+        server = await websockets.serve(self._on_connect, host, port, ssl=ssl_context)
         self._logger.info("Relay server started on %s:%s", host, port)
         return server
 
@@ -99,8 +117,16 @@ class OCPPRelay:
 
         self._logger.info("Charge point connected: %s (protocol=%s)", charge_point_id, ws_subprotocol)
 
+        extra_headers = []
+        if all([self._csms_id, self._csms_pass]):
+            extra_headers.append(basic_auth_header(self._csms_id, self._csms_pass))
+
         csms_uri = f"{self._csms_url}/{charge_point_id}"
-        async with websockets.connect(csms_uri, subprotocols=[ws_subprotocol]) as csms_ws:
+        async with websockets.connect(
+            csms_uri,
+            subprotocols=[ws_subprotocol],
+            additional_headers=extra_headers,
+        ) as csms_ws:
             tasks = [
                 asyncio.create_task(
                     self._relay(
@@ -126,7 +152,7 @@ class OCPPRelay:
 
             try:
                 await asyncio.gather(*tasks)
-            except websockets.exceptions.ConnectionClosed:
+            except (websockets.exceptions.ConnectionClosed, websockets.exceptions.ConnectionClosedOK):
                 self._logger.info("Relay connection closed for charge point %s", charge_point_id)
             finally:
                 for task in tasks:
@@ -150,71 +176,13 @@ class OCPPRelay:
             self._logger.info(
                 "Relayed message from %s to %s (%s)", source_name, target_name, json_message[1]
             )
-            self._snoop_queue.put_nowait(
-                MessageData(
-                    event="Message",
-                    sender=source_name,
-                    protocol=protocol,
-                    cp_id=cp_id,
-                    payload=json_message,
+            if self._snoop_queue is not None:
+                self._snoop_queue.put_nowait(
+                    MessageData(
+                        event="Message",
+                        sender=source_name,
+                        protocol=protocol,
+                        cp_id=cp_id,
+                        payload=json_message,
+                    )
                 )
-            )
-
-
-class LocalRelaySupervisor:
-    def __init__(self, hass, config: dict[str, Any]) -> None:
-        self._hass = hass
-        self._config = config
-        self._logger = logging.getLogger(__name__)
-        self._task: asyncio.Task | None = None
-
-    async def async_start(self) -> None:
-        if self._task is None:
-            self._task = self._hass.async_create_task(self._run())
-
-    async def async_stop(self) -> None:
-        if self._task is None:
-            return
-        self._task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await self._task
-        self._task = None
-
-    async def _run(self) -> None:
-        while True:
-            relay_server = None
-            snoop_server = None
-            snoop_ws_server: SnoopWebSocketServer | None = None
-            try:
-                cpms_url = self._config.get(CONF_CPMS_URL)
-                if not cpms_url:
-                    raise ValueError("Local relay mode requires cpms_url")
-
-                msg_queue: asyncio.Queue = asyncio.Queue()
-                relay = OCPPRelay(cpms_url, snoop_queue=msg_queue)
-                relay_server = await relay.start(
-                    self._config[CONF_RELAY_OCPP_HOST],
-                    self._config[CONF_RELAY_OCPP_PORT],
-                )
-
-                snoop_ws_server = SnoopWebSocketServer(snoop_queue=msg_queue)
-                snoop_server = await snoop_ws_server.start(
-                    self._config[CONF_RELAY_SNOOP_HOST],
-                    self._config[CONF_RELAY_SNOOP_PORT],
-                )
-
-                await asyncio.gather(relay_server.wait_closed(), snoop_server.wait_closed())
-            except asyncio.CancelledError:
-                raise
-            except Exception as err:  # noqa: BLE001
-                self._logger.exception("Local relay crashed: %s. Restarting in 15 seconds.", err)
-                await asyncio.sleep(15)
-            finally:
-                if relay_server is not None:
-                    relay_server.close()
-                    await relay_server.wait_closed()
-                if snoop_server is not None:
-                    snoop_server.close()
-                    await snoop_server.wait_closed()
-                if snoop_ws_server is not None:
-                    await snoop_ws_server.stop()

@@ -11,8 +11,8 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .client import OCPPSnoopClient
 from .const import DOMAIN, SIGNAL_NEW_SENSOR, SIGNAL_SENSOR_UPDATE
+from .snoop.client import OCPPSnoopClient
 
 _LOGGER = logging.getLogger(__name__)
 

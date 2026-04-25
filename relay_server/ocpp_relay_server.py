@@ -11,8 +11,7 @@ import sys
 
 import yaml
 
-from relay_server.relay.ocpprelay import OCPPRelay
-from relay_server.relay.snoopws import SnoopWebSocketServer
+from custom_components.ha_ocpp_relay.relay.core import OCPPRelay, SnoopWebSocketServer
 
 
 def parse_args():

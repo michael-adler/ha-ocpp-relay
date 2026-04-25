@@ -10,7 +10,7 @@ import websockets
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .const import CONF_SNOOP_SOCKET, DOMAIN, SIGNAL_NEW_SENSOR, SIGNAL_SENSOR_UPDATE
+from ..const import CONF_SNOOP_SOCKET, DOMAIN, SIGNAL_NEW_SENSOR, SIGNAL_SENSOR_UPDATE
 from .models import OCPPSensorData
 from .parser import OCPPFilter
 

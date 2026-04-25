@@ -19,7 +19,13 @@ ocpp-relay-server = "relay_server.ocpp_relay_server:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["relay_server", "relay_server.*"]
+namespaces = true
+include = [
+  "relay_server",
+  "relay_server.*",
+  "custom_components.ha_ocpp_relay",
+  "custom_components.ha_ocpp_relay.*",
+]
 
 [tool.setuptools_scm]
 version_scheme = "no-guess-dev"

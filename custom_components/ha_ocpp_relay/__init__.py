@@ -2,26 +2,32 @@
 
 from __future__ import annotations
 
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from typing import TYPE_CHECKING, Any
 
-from .client import OCPPSnoopClient
 from .const import (
     CONF_RELAY_IS_LOCAL,
     DOMAIN,
     PLATFORMS,
     normalize_relay_config,
 )
-from .local_relay import LocalRelaySupervisor
+
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.core import HomeAssistant
+    from .relay.local_relay_supervisor import LocalRelaySupervisor
+    from .snoop.client import OCPPSnoopClient
 
 
-def _merged_config(entry: ConfigEntry) -> dict:
+def _merged_config(entry: ConfigEntry) -> dict[str, Any]:
     merged = dict(entry.data)
     merged.update(entry.options)
     return normalize_relay_config(merged)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    from .relay.local_relay_supervisor import LocalRelaySupervisor
+    from .snoop.client import OCPPSnoopClient
+
     hass.data.setdefault(DOMAIN, {})
 
     config = _merged_config(entry)
@@ -45,6 +51,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    from .snoop.client import OCPPSnoopClient
+
     runtime = hass.data[DOMAIN].pop(entry.entry_id)
     client: OCPPSnoopClient = runtime["client"]
     local_relay: LocalRelaySupervisor | None = runtime["relay"]
