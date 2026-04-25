@@ -70,6 +70,9 @@ python -m relay_server.ocpp_relay_server \
 5. Configure relay settings in the integration UI:
 	- `relay_is_local`: whether Home Assistant should run the relay process.
 	- `cpms_url`: remote CSMS URL used by the relay process (required when local relay is enabled).
+	   Relays are typically web sockets, e.g. wss://gateway-eneprodus.autel.com/ws/webSocket.
+	   The serial numbers of EV chargers connecting through the relay will automatically be
+	   appended to the URL.
 	- `relay_ocpp_host` and `relay_ocpp_port`: relay bind address/port for charge points.
 	- `relay_snoop_host` and `relay_snoop_port`: relay snoop bind address/port.
 	- `snoop_socket`: URL used by the HA snoop client.

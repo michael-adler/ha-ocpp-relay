@@ -39,7 +39,8 @@ def normalize_relay_config(config: dict) -> dict:
     normalized.setdefault(CONF_CPMS_URL, "")
 
     if normalized[CONF_RELAY_IS_LOCAL]:
-        normalized[CONF_RELAY_SNOOP_HOST] = DEFAULT_RELAY_SNOOP_HOST
+        # Do not override relay_snoop_host; just ensure snoop_socket default is set
+        normalized.setdefault(CONF_RELAY_SNOOP_HOST, DEFAULT_RELAY_SNOOP_HOST)
         normalized[CONF_SNOOP_SOCKET] = default_snoop_socket_for_container(
             normalized[CONF_RELAY_SNOOP_PORT]
         )

@@ -50,6 +50,7 @@ def _details_schema(defaults: dict, is_local: bool) -> vol.Schema:
     fields: dict = {
         vol.Required(CONF_RELAY_OCPP_HOST, default=defaults[CONF_RELAY_OCPP_HOST]): str,
         vol.Required(CONF_RELAY_OCPP_PORT, default=defaults[CONF_RELAY_OCPP_PORT]): int,
+        vol.Required(CONF_RELAY_SNOOP_HOST, default=defaults[CONF_RELAY_SNOOP_HOST]): str,
         vol.Required(CONF_RELAY_SNOOP_PORT, default=defaults[CONF_RELAY_SNOOP_PORT]): int,
     }
 
@@ -57,7 +58,6 @@ def _details_schema(defaults: dict, is_local: bool) -> vol.Schema:
         fields[vol.Required(CONF_CPMS_URL, default=defaults[CONF_CPMS_URL])] = str
     else:
         fields[vol.Optional(CONF_CPMS_URL, default=defaults[CONF_CPMS_URL])] = str
-        fields[vol.Required(CONF_RELAY_SNOOP_HOST, default=defaults[CONF_RELAY_SNOOP_HOST])] = str
         fields[vol.Required(CONF_SNOOP_SOCKET, default=defaults[CONF_SNOOP_SOCKET])] = str
 
     return vol.Schema(fields)
@@ -117,7 +117,8 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the instance state."""
         self._is_local = DEFAULT_RELAY_IS_LOCAL
-        self._defaults = _defaults_from_mapping({})
+        self._external_config = {}
+        self._defaults = _defaults_from_mapping({CONF_RELAY_SNOOP_HOST: DEFAULT_RELAY_SNOOP_HOST})
 
     def _show_details_form(self, *, errors: dict | None = None) -> FlowResult:
         """Show the detailed settings form for initial setup."""
@@ -133,8 +134,21 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input=None) -> FlowResult:
         """Collect integration mode, then route to the detailed settings step."""
         if user_input is not None:
-            self._is_local = user_input[CONF_RELAY_IS_LOCAL]
+            new_is_local = user_input[CONF_RELAY_IS_LOCAL]
+            # If toggling to local, save external config fields
+            if new_is_local and not self._is_local:
+                self._external_config = {
+                    CONF_RELAY_SNOOP_HOST: self._defaults.get(CONF_RELAY_SNOOP_HOST),
+                    CONF_RELAY_SNOOP_PORT: self._defaults.get(CONF_RELAY_SNOOP_PORT),
+                    CONF_SNOOP_SOCKET: self._defaults.get(CONF_SNOOP_SOCKET),
+                }
+            # If toggling to external, restore external config fields if available
+            if not new_is_local and self._is_local and self._external_config:
+                self._defaults.update(self._external_config)
+            self._is_local = new_is_local
             self._defaults[CONF_RELAY_IS_LOCAL] = self._is_local
+            if self._is_local:
+                self._defaults[CONF_RELAY_SNOOP_HOST] = DEFAULT_RELAY_SNOOP_HOST
             return await self.async_step_user_details()
 
         return self.async_show_form(
@@ -149,14 +163,41 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         not configured twice.
         """
         if user_input is not None:
+            # If relay_is_local was toggled in this step, update defaults and re-render
+            if CONF_RELAY_IS_LOCAL in user_input and user_input[CONF_RELAY_IS_LOCAL] != self._is_local:
+                new_is_local = user_input[CONF_RELAY_IS_LOCAL]
+                # Save external config fields if toggling to local
+                if new_is_local and not self._is_local:
+                    self._external_config = {
+                        CONF_RELAY_SNOOP_HOST: user_input.get(CONF_RELAY_SNOOP_HOST, self._defaults.get(CONF_RELAY_SNOOP_HOST)),
+                        CONF_RELAY_SNOOP_PORT: user_input.get(CONF_RELAY_SNOOP_PORT, self._defaults.get(CONF_RELAY_SNOOP_PORT)),
+                        CONF_SNOOP_SOCKET: user_input.get(CONF_SNOOP_SOCKET, self._defaults.get(CONF_SNOOP_SOCKET)),
+                    }
+                # Restore external config fields if toggling to external
+                if not new_is_local and self._is_local and self._external_config:
+                    self._defaults.update(self._external_config)
+                self._is_local = new_is_local
+                self._defaults[CONF_RELAY_IS_LOCAL] = self._is_local
+                if self._is_local:
+                    self._defaults[CONF_RELAY_SNOOP_HOST] = DEFAULT_RELAY_SNOOP_HOST
+                return self._show_details_form()
+
             config, errors = self._validate_detail_input(user_input)
             if errors:
                 self._defaults = _defaults_from_mapping(config)
                 return self._show_details_form(errors=errors)
 
+            # Persist external config fields in options if in external mode
+            options = {}
+            if not config[CONF_RELAY_IS_LOCAL]:
+                options["external_config"] = {
+                    CONF_RELAY_SNOOP_HOST: config.get(CONF_RELAY_SNOOP_HOST),
+                    CONF_RELAY_SNOOP_PORT: config.get(CONF_RELAY_SNOOP_PORT),
+                    CONF_SNOOP_SOCKET: config.get(CONF_SNOOP_SOCKET),
+                }
             await self.async_set_unique_id(config[CONF_SNOOP_SOCKET])
             self._abort_if_unique_id_configured()
-            return self.async_create_entry(title="HA OCPP Relay", data=config)
+            return self.async_create_entry(title="HA OCPP Relay", data=config, options=options)
 
         self._defaults = _defaults_from_mapping(self._defaults)
         return self._show_details_form()
@@ -173,6 +214,7 @@ class HaOcppRelayOptionsFlow(config_entries.OptionsFlow):
         self._config_entry = config_entry
         merged = dict(config_entry.data)
         merged.update(config_entry.options)
+        self._external_config = config_entry.options.get("external_config", {})
         self._defaults = _defaults_from_mapping(merged)
         self._is_local = self._defaults[CONF_RELAY_IS_LOCAL]
 
@@ -190,8 +232,21 @@ class HaOcppRelayOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None) -> FlowResult:
         """Collect mode selection for options editing."""
         if user_input is not None:
-            self._is_local = user_input[CONF_RELAY_IS_LOCAL]
+            new_is_local = user_input[CONF_RELAY_IS_LOCAL]
+            # If toggling to local, save external config fields
+            if new_is_local and not self._is_local:
+                self._external_config = {
+                    CONF_RELAY_SNOOP_HOST: self._defaults.get(CONF_RELAY_SNOOP_HOST),
+                    CONF_RELAY_SNOOP_PORT: self._defaults.get(CONF_RELAY_SNOOP_PORT),
+                    CONF_SNOOP_SOCKET: self._defaults.get(CONF_SNOOP_SOCKET),
+                }
+            # If toggling to external, restore external config fields if available
+            if not new_is_local and self._is_local and self._external_config:
+                self._defaults.update(self._external_config)
+            self._is_local = new_is_local
             self._defaults[CONF_RELAY_IS_LOCAL] = self._is_local
+            if self._is_local:
+                self._defaults[CONF_RELAY_SNOOP_HOST] = DEFAULT_RELAY_SNOOP_HOST
             return await self.async_step_details()
 
         return self.async_show_form(
@@ -202,12 +257,39 @@ class HaOcppRelayOptionsFlow(config_entries.OptionsFlow):
     async def async_step_details(self, user_input=None) -> FlowResult:
         """Validate and save edited options for an existing entry."""
         if user_input is not None:
+            # If relay_is_local was toggled in this step, update defaults and re-render
+            if CONF_RELAY_IS_LOCAL in user_input and user_input[CONF_RELAY_IS_LOCAL] != self._is_local:
+                new_is_local = user_input[CONF_RELAY_IS_LOCAL]
+                # Save external config fields if toggling to local
+                if new_is_local and not self._is_local:
+                    self._external_config = {
+                        CONF_RELAY_SNOOP_HOST: user_input.get(CONF_RELAY_SNOOP_HOST, self._defaults.get(CONF_RELAY_SNOOP_HOST)),
+                        CONF_RELAY_SNOOP_PORT: user_input.get(CONF_RELAY_SNOOP_PORT, self._defaults.get(CONF_RELAY_SNOOP_PORT)),
+                        CONF_SNOOP_SOCKET: user_input.get(CONF_SNOOP_SOCKET, self._defaults.get(CONF_SNOOP_SOCKET)),
+                    }
+                # Restore external config fields if toggling to external
+                if not new_is_local and self._is_local and self._external_config:
+                    self._defaults.update(self._external_config)
+                self._is_local = new_is_local
+                self._defaults[CONF_RELAY_IS_LOCAL] = self._is_local
+                if self._is_local:
+                    self._defaults[CONF_RELAY_SNOOP_HOST] = DEFAULT_RELAY_SNOOP_HOST
+                return self._show_details_form()
+
             config, errors = self._validate_detail_input(user_input)
             if errors:
                 self._defaults = _defaults_from_mapping(config)
                 return self._show_details_form(errors=errors)
 
-            return self.async_create_entry(title="", data=config)
+            # Persist external config fields in options if in external mode
+            options = dict(self._config_entry.options)
+            if not config[CONF_RELAY_IS_LOCAL]:
+                options["external_config"] = {
+                    CONF_RELAY_SNOOP_HOST: config.get(CONF_RELAY_SNOOP_HOST),
+                    CONF_RELAY_SNOOP_PORT: config.get(CONF_RELAY_SNOOP_PORT),
+                    CONF_SNOOP_SOCKET: config.get(CONF_SNOOP_SOCKET),
+                }
+            return self.async_create_entry(title="", data=config, options=options)
 
         self._defaults = _defaults_from_mapping(self._defaults)
         return self._show_details_form()

@@ -1,4 +1,9 @@
-# Shared configuration for relay server.
+# Example configuration for ocpp2mqtt CLI tools.
+# NOTE: This configuration file is used only with the standalone CLI
+# tools (ocpp_relay_server.py and ocpp_snoop2mqtt.py). The HACS/Home
+# Assistant integration does NOT read this file; it uses config entries
+# and options from the UI instead.
+#
 # Command-line arguments override values in this file.
 
 relay:
@@ -9,3 +14,10 @@ relay:
   #snoop_port: 8501
   #ssl_cert: "/path/to/cert.pem"
   #ssl_key: "/path/to/key.pem"
+
+snoop2mqtt:
+  #snoop_socket: "ws://localhost:8501/"
+  #mqtt_broker_host: "localhost"
+  #mqtt_broker_port: 1883
+  #mqtt_broker_username: "your_username_here"
+  #mqtt_broker_password: "your_password_here"
