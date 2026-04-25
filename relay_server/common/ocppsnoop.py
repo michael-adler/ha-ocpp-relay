@@ -24,3 +24,22 @@ async def receive_ocpp_snoop(ws_uri: str):
                     logger.error("Error decoding JSON: %s", err)
         except websockets.exceptions.ConnectionClosed as err:
             logger.warning("Snoop connection closed (%s: %s). Retrying...", err.code, err.reason)
+
+
+def receive_ocpp_from_file(file_path: str):
+    """Yield MessageData objects from a JSON-lines file."""
+
+    logger = logging.getLogger(__name__)
+    logger.info("Reading OCPP messages from %s", file_path)
+    try:
+        with open(file_path, "r", encoding="utf-8") as infile:
+            for line in infile:
+                try:
+                    data = json.loads(line)
+                    yield MessageData(**data)
+                except json.JSONDecodeError as err:
+                    logger.error("Error decoding JSON: %s", err)
+    except FileNotFoundError:
+        logger.error("File not found: %s", file_path)
+    except Exception as err:  # noqa: BLE001
+        logger.error("Unexpected error reading %s: %s", file_path, err)

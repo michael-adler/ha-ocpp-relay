@@ -84,6 +84,24 @@ If `relay_is_local` is enabled, the integration runs the relay process and this 
 python -m relay_server.ocpp_relay_server --cpms wss://<actual-ocpp-server>/ws/webSocket
 ```
 
+## External MQTT helper scripts
+
+The package also includes two external CLI scripts:
+
+- `ocpp-snoop2mqtt`: subscribes to the relay snoop websocket and publishes mapped telemetry to MQTT.
+- `ocpp-snoop-recorder`: records the raw snoop websocket JSON stream to a file for later replay or analysis.
+
+`ocpp-snoop2mqtt` is not required when you use the `ha_ocpp_relay` Home Assistant integration, because that integration already consumes the snoop stream directly and creates entities natively. It is included for deployments where both the relay and MQTT client are run outside Home Assistant.
+
+`ocpp-snoop-recorder` can be useful for debugging. It records a log of OCPP transactions that can be replayed later.
+
+Example usage:
+
+```bash
+ocpp-snoop2mqtt --snoop-socket ws://127.0.0.1:8501/ --mqtt-broker-host localhost
+ocpp-snoop-recorder --snoop-socket ws://127.0.0.1:8501/ --output output.json
+```
+
 ## Configuration example
 
 See `configs/configuration_example.yaml`.
