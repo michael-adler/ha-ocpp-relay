@@ -15,6 +15,7 @@ from custom_components.ha_ocpp_relay.relay.core import OCPPRelay, SnoopWebSocket
 
 
 def parse_args():
+    """Parse CLI arguments and optional YAML defaults for relay startup."""
     parser = argparse.ArgumentParser(description="Relay OCPP traffic between a charge point and a CSMS.")
     parser.add_argument("--config", type=str, default=None)
     parser.add_argument("--cpms", type=str, default=None)
@@ -29,6 +30,7 @@ def parse_args():
     group.add_argument("-v", "--verbose", action="store_true")
     group.add_argument("-q", "--quiet", action="store_true")
 
+    # Parse once to discover config path, then apply YAML values as parser defaults.
     preliminary = parser.parse_known_args()[0]
     yaml_defaults = {}
     if preliminary.config:
@@ -38,6 +40,7 @@ def parse_args():
 
     for key, value in yaml_defaults.items():
         argname = f"--{key.replace('_', '-')}"
+        # CLI flags keep highest precedence; YAML only fills values not passed on argv.
         if not any(argname in arg for arg in sys.argv[1:]):
             parser.set_defaults(**{key: value})
 
@@ -49,6 +52,7 @@ def parse_args():
 
 
 def get_ssl_context(ssl_cert, ssl_key):
+    """Create TLS server context when both certificate and key are provided."""
     if not ssl_cert or not ssl_key:
         return None
 
@@ -58,6 +62,11 @@ def get_ssl_context(ssl_cert, ssl_key):
 
 
 async def core(args):
+    """Start relay and snoop servers and keep both running.
+
+    The relay produces a shared message queue, and the snoop websocket server
+    publishes that queue to external observers.
+    """
     ssl_context = get_ssl_context(args.ssl_cert, args.ssl_key)
     msg_queue = asyncio.Queue()
 
@@ -68,6 +77,7 @@ async def core(args):
     snoop_server = await snoop.start(
         args.snoop_host,
         args.snoop_port,
+        # Keep localhost development simple; use TLS only for externally reachable snoop endpoint.
         ssl_context=(None if args.snoop_host == "localhost" else ssl_context),
     )
 
@@ -75,6 +85,7 @@ async def core(args):
 
 
 def main():
+    """Configure logging and run the relay server CLI entrypoint."""
     args = parse_args()
 
     level = logging.DEBUG if args.verbose else logging.INFO

@@ -9,10 +9,16 @@ class OCPPFilter:
     """Stateful parser for OCPP snoop messages into Home Assistant sensor data."""
 
     def __init__(self) -> None:
+        """Initialize the instance state."""
         self._logger = logging.getLogger(__name__)
         self._manufacturer: dict[str, str | None] = {}
 
     def filter(self, msg: dict) -> list[OCPPSensorData] | None:
+        """Translate one snoop envelope into zero or more normalized sensors.
+
+        This is the protocol boundary where raw OCPP message arrays become
+        stable sensor records consumed by the Home Assistant sensor platform.
+        """
         if msg.get("event") != "Message":
             return None
         if msg.get("sender") != "CP":
@@ -21,14 +27,17 @@ class OCPPFilter:
         cp_id = msg.get("cp_id") or "unknown"
         protocol = msg.get("protocol")
         if protocol and protocol.lower().startswith("ocpp"):
+            # Normalize values like "ocpp1.6" -> "1.6" for version dispatch below.
             protocol = protocol[4:]
 
         ocpp = msg.get("payload")
+        # OCPP CALL frames are [2, unique_id, action, payload].
         if not isinstance(ocpp, list) or len(ocpp) < 4:
             return None
         if ocpp[0] != 2:
             return None
 
+        # Cache vendor/manufacturer per charge point when it first appears.
         if cp_id not in self._manufacturer:
             self._manufacturer[cp_id] = None
         if not self._manufacturer[cp_id]:
@@ -36,6 +45,7 @@ class OCPPFilter:
 
         timestamp = msg.get("timestamp")
         if ocpp[2] == "Heartbeat":
+            # Heartbeat does not carry measured values; use receive timestamp as sensor state.
             return [
                 OCPPSensorData(
                     cp_id=cp_id,
@@ -54,6 +64,7 @@ class OCPPFilter:
         return self._filter_ocpp20(cp_id, timestamp, ocpp)
 
     def _get_manufacturer(self, ocpp: list) -> str | None:
+        """Extract vendor/manufacturer information from DataTransfer frames."""
         action = ocpp[2]
         payload = ocpp[3]
         if action == "DataTransfer" and isinstance(payload, dict):
@@ -70,6 +81,7 @@ class OCPPFilter:
         value,
         unit: str,
     ) -> OCPPSensorData | None:
+        """Build one normalized measurement sensor from a sampled value row."""
         value_type = (value_type or "Energy.Active.Import.Register").replace(".", "-")
 
         if value_type.startswith("Current"):
@@ -110,6 +122,7 @@ class OCPPFilter:
         )
 
     def _filter_ocpp16(self, cp_id: str, timestamp: str, ocpp: list) -> list[OCPPSensorData] | None:
+        """Parse OCPP 1.6 CALL payloads into normalized telemetry sensors."""
         action = ocpp[2]
         payload = ocpp[3]
 
@@ -132,6 +145,7 @@ class OCPPFilter:
 
         if action == "MeterValues":
             messages: list[OCPPSensorData] = []
+            # Flatten OCPP 1.6 meterValue/sampledValue nesting into one sensor list.
             for meter_value in payload.get("meterValue", []):
                 for sampled_value in meter_value.get("sampledValue", []):
                     sensor = self._new_meter_data(
@@ -150,6 +164,7 @@ class OCPPFilter:
         return None
 
     def _filter_ocpp20(self, cp_id: str, timestamp: str, ocpp: list) -> list[OCPPSensorData] | None:
+        """Parse OCPP 2.0.1 CALL payloads into normalized telemetry sensors."""
         action = ocpp[2]
         payload = ocpp[3]
 
@@ -172,6 +187,7 @@ class OCPPFilter:
 
         if action == "MeterValues":
             messages: list[OCPPSensorData] = []
+            # OCPP 2.0 carries units in a nested object, defaulting to Wh when omitted.
             for meter_value in payload.get("meterValue", []):
                 for sampled_value in meter_value.get("sampledValue", []):
                     unit_obj = sampled_value.get("unitOfMeasure") or {}

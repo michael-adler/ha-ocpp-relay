@@ -9,10 +9,12 @@ class OCPPFilter:
     """Stateful filter for OCPP messages into normalized sensor updates."""
 
     def __init__(self) -> None:
+        """Initialize the instance state."""
         self._logger = logging.getLogger(__name__)
         self._manufacturer: dict[str, str | None] = {}
 
     def filter(self, msg: MessageData) -> list[SensorData] | None:
+        """Map one relay snoop message into normalized sensor payloads."""
         if msg.event != "Message":
             return None
         if msg.sender != "CP":
@@ -53,6 +55,7 @@ class OCPPFilter:
         return self._filter_ocpp20(cp_id, msg.timestamp, ocpp)
 
     def _get_manufacturer(self, ocpp: list) -> str | None:
+        """Extract vendor identity from DataTransfer when present."""
         action = ocpp[2]
         payload = ocpp[3]
         if action == "DataTransfer" and isinstance(payload, dict):
@@ -69,6 +72,7 @@ class OCPPFilter:
         value: str,
         unit: str,
     ) -> SensorData | None:
+        """Normalize one sampled meter reading into SensorData."""
         value_type = (value_type or "Energy.Active.Import.Register").replace(".", "-")
 
         if value_type.startswith("Current"):
@@ -109,6 +113,7 @@ class OCPPFilter:
         )
 
     def _filter_ocpp16(self, cp_id: str, timestamp: str, ocpp: list) -> list[SensorData] | None:
+        """Parse OCPP 1.6 actions that are relevant for telemetry sensors."""
         action = ocpp[2]
         payload = ocpp[3]
 
@@ -149,6 +154,7 @@ class OCPPFilter:
         return None
 
     def _filter_ocpp20(self, cp_id: str, timestamp: str, ocpp: list) -> list[SensorData] | None:
+        """Parse OCPP 2.0.1 actions that are relevant for telemetry sensors."""
         action = ocpp[2]
         payload = ocpp[3]
 

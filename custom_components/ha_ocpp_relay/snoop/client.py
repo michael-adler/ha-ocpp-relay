@@ -19,6 +19,11 @@ class OCPPSnoopClient:
     """Background client consuming OCPP snoop websocket and pushing sensor updates."""
 
     def __init__(self, hass: HomeAssistant, entry_id: str, config: dict[str, Any]) -> None:
+        """Initialize client state for one integration entry.
+
+        Each entry owns one snoop stream consumer so sensors remain isolated by
+        config entry ID.
+        """
         self._hass = hass
         self._entry_id = entry_id
         self._logger = logging.getLogger(__name__)
@@ -30,12 +35,15 @@ class OCPPSnoopClient:
 
     @property
     def sensors(self) -> dict[str, OCPPSensorData]:
+        """Expose the latest sensor snapshot indexed by unique ID."""
         return self._sensors
 
     async def async_start(self) -> None:
+        """Start the long-running websocket consumer task."""
         self._task = self._hass.async_create_task(self._run(), name=f"{DOMAIN}_{self._entry_id}")
 
     async def async_stop(self) -> None:
+        """Cancel and await the websocket consumer task."""
         if self._task is not None:
             self._task.cancel()
             try:
@@ -45,6 +53,10 @@ class OCPPSnoopClient:
             self._task = None
 
     async def _run(self) -> None:
+        """Maintain a resilient connection to the relay snoop websocket.
+
+        The loop reconnects with backoff on transient network/server failures.
+        """
         self._logger.info("Connecting to relay snoop websocket at %s", self._snoop_socket)
         while True:
             try:
@@ -58,6 +70,7 @@ class OCPPSnoopClient:
                 await asyncio.sleep(15)
 
     async def _handle_message(self, message: str) -> None:
+        """Decode one snoop event and fan out resulting sensor updates."""
         try:
             data = json.loads(message)
         except json.JSONDecodeError:
@@ -72,6 +85,7 @@ class OCPPSnoopClient:
             self._update_sensor(sensor)
 
     def _update_sensor(self, sensor: OCPPSensorData) -> None:
+        """Store sensor state and notify entity creation/update listeners."""
         is_new = sensor.unique_id not in self._sensors
         self._sensors[sensor.unique_id] = sensor
 

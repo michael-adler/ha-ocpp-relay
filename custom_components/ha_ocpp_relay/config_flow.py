@@ -28,10 +28,12 @@ from .const import (
 
 
 def _config_schema(defaults: dict) -> vol.Schema:
+    """Build the initial schema used when opening the flow."""
     return _details_schema(defaults, defaults[CONF_RELAY_IS_LOCAL])
 
 
 def _mode_schema(default_is_local: bool) -> vol.Schema:
+    """Build schema for the mode selector step (local relay vs external)."""
     return vol.Schema(
         {
             vol.Required(CONF_RELAY_IS_LOCAL, default=default_is_local): bool,
@@ -40,6 +42,11 @@ def _mode_schema(default_is_local: bool) -> vol.Schema:
 
 
 def _details_schema(defaults: dict, is_local: bool) -> vol.Schema:
+    """Build detail fields based on selected deployment mode.
+
+    Local mode requires a CPMS URL because HA will host relay+snoop servers.
+    External mode instead asks where to consume snoop data from.
+    """
     fields: dict = {
         vol.Required(CONF_RELAY_OCPP_HOST, default=defaults[CONF_RELAY_OCPP_HOST]): str,
         vol.Required(CONF_RELAY_OCPP_PORT, default=defaults[CONF_RELAY_OCPP_PORT]): int,
@@ -57,10 +64,12 @@ def _details_schema(defaults: dict, is_local: bool) -> vol.Schema:
 
 
 def _normalize_config(user_input: dict) -> dict:
+    """Apply defaults and invariants before persisting flow input."""
     return normalize_relay_config(user_input)
 
 
 def _validate_config(config: dict) -> dict[str, str]:
+    """Return form errors for invalid combinations not expressible in schema."""
     errors: dict[str, str] = {}
     if config[CONF_RELAY_IS_LOCAL] and not config.get(CONF_CPMS_URL):
         errors[CONF_CPMS_URL] = "required"
@@ -68,6 +77,7 @@ def _validate_config(config: dict) -> dict[str, str]:
 
 
 def _defaults_from_mapping(mapping: dict | None) -> dict:
+    """Project stored config into defaults for flow form fields."""
     normalized = normalize_relay_config(mapping or {})
     relay_snoop_port = normalized[CONF_RELAY_SNOOP_PORT]
     return {
@@ -88,10 +98,12 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     def __init__(self) -> None:
+        """Initialize the instance state."""
         self._is_local = DEFAULT_RELAY_IS_LOCAL
         self._defaults = _defaults_from_mapping({})
 
     async def async_step_user(self, user_input=None) -> FlowResult:
+        """Collect integration mode, then route to the detailed settings step."""
         if user_input is not None:
             self._is_local = user_input[CONF_RELAY_IS_LOCAL]
             self._defaults[CONF_RELAY_IS_LOCAL] = self._is_local
@@ -103,6 +115,11 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_user_details(self, user_input=None) -> FlowResult:
+        """Validate and persist initial integration settings.
+
+        The snoop socket is used as unique ID so duplicate relay endpoints are
+        not configured twice.
+        """
         if user_input is not None:
             raw = dict(self._defaults)
             raw.update(user_input)
@@ -130,11 +147,13 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     def async_get_options_flow(config_entry):
+        """Return the options flow used to edit an existing entry."""
         return HaOcppRelayOptionsFlow(config_entry)
 
 
 class HaOcppRelayOptionsFlow(config_entries.OptionsFlow):
     def __init__(self, config_entry) -> None:
+        """Initialize the instance state."""
         self._config_entry = config_entry
         merged = dict(config_entry.data)
         merged.update(config_entry.options)
@@ -142,6 +161,7 @@ class HaOcppRelayOptionsFlow(config_entries.OptionsFlow):
         self._is_local = self._defaults[CONF_RELAY_IS_LOCAL]
 
     async def async_step_init(self, user_input=None) -> FlowResult:
+        """Collect mode selection for options editing."""
         if user_input is not None:
             self._is_local = user_input[CONF_RELAY_IS_LOCAL]
             self._defaults[CONF_RELAY_IS_LOCAL] = self._is_local
@@ -153,6 +173,7 @@ class HaOcppRelayOptionsFlow(config_entries.OptionsFlow):
         )
 
     async def async_step_details(self, user_input=None) -> FlowResult:
+        """Validate and save edited options for an existing entry."""
         if user_input is not None:
             raw = dict(self._defaults)
             raw.update(user_input)

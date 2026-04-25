@@ -19,12 +19,24 @@ if TYPE_CHECKING:
 
 
 def _merged_config(entry: ConfigEntry) -> dict[str, Any]:
+    """Combine entry data and options into the normalized runtime config.
+
+    Home Assistant keeps initial config in entry.data and user edits in
+    entry.options. This helper produces the effective configuration consumed by
+    the client and optional local relay supervisor.
+    """
     merged = dict(entry.data)
     merged.update(entry.options)
     return normalize_relay_config(merged)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Initialize integration runtime for one config entry.
+
+    This wires the snoop client, optionally starts the embedded relay stack for
+    local mode, stores runtime objects in hass.data, and forwards setup to
+    platform entities.
+    """
     from .relay.local_relay_supervisor import LocalRelaySupervisor
     from .snoop.client import OCPPSnoopClient
 
@@ -51,6 +63,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Tear down runtime objects and unload entity platforms for an entry."""
     from .snoop.client import OCPPSnoopClient
 
     runtime = hass.data[DOMAIN].pop(entry.entry_id)
@@ -68,4 +81,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Trigger a full unload/setup cycle after config options change."""
     await hass.config_entries.async_reload(entry.entry_id)

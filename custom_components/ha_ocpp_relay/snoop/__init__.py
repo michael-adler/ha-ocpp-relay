@@ -13,6 +13,7 @@ __all__ = ["OCPPSnoopClient", "OCPPSensorData", "OCPPFilter"]
 
 
 def __getattr__(name: str):
+    """Lazily import snoop symbols to avoid eager dependency loading."""
     if name == "OCPPSnoopClient":
         from .client import OCPPSnoopClient
 

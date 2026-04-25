@@ -23,28 +23,29 @@ SIGNAL_SENSOR_UPDATE = "ha_ocpp_relay_sensor_update"
 
 
 def default_snoop_socket_for_container(port: int) -> str:
-	return f"ws://127.0.0.1:{port}/"
+    """Build the default local snoop websocket URL from a configured port."""
+    return f"ws://127.0.0.1:{port}/"
 
 
 def normalize_relay_config(config: dict) -> dict:
-	"""Return config with defaults applied and local-mode invariants enforced."""
-	normalized = dict(config)
+    """Return config with defaults applied and local-mode invariants enforced."""
+    normalized = dict(config)
 
-	normalized.setdefault(CONF_RELAY_IS_LOCAL, DEFAULT_RELAY_IS_LOCAL)
-	normalized.setdefault(CONF_RELAY_OCPP_HOST, DEFAULT_RELAY_OCPP_HOST)
-	normalized.setdefault(CONF_RELAY_OCPP_PORT, DEFAULT_RELAY_OCPP_PORT)
-	normalized.setdefault(CONF_RELAY_SNOOP_HOST, DEFAULT_RELAY_SNOOP_HOST)
-	normalized.setdefault(CONF_RELAY_SNOOP_PORT, DEFAULT_RELAY_SNOOP_PORT)
-	normalized.setdefault(CONF_CPMS_URL, "")
+    normalized.setdefault(CONF_RELAY_IS_LOCAL, DEFAULT_RELAY_IS_LOCAL)
+    normalized.setdefault(CONF_RELAY_OCPP_HOST, DEFAULT_RELAY_OCPP_HOST)
+    normalized.setdefault(CONF_RELAY_OCPP_PORT, DEFAULT_RELAY_OCPP_PORT)
+    normalized.setdefault(CONF_RELAY_SNOOP_HOST, DEFAULT_RELAY_SNOOP_HOST)
+    normalized.setdefault(CONF_RELAY_SNOOP_PORT, DEFAULT_RELAY_SNOOP_PORT)
+    normalized.setdefault(CONF_CPMS_URL, "")
 
-	if normalized[CONF_RELAY_IS_LOCAL]:
-		normalized[CONF_RELAY_SNOOP_HOST] = DEFAULT_RELAY_SNOOP_HOST
-		normalized[CONF_SNOOP_SOCKET] = default_snoop_socket_for_container(
-			normalized[CONF_RELAY_SNOOP_PORT]
-		)
-	elif not normalized.get(CONF_SNOOP_SOCKET):
-		normalized[CONF_SNOOP_SOCKET] = default_snoop_socket_for_container(
-			normalized[CONF_RELAY_SNOOP_PORT]
-		)
+    if normalized[CONF_RELAY_IS_LOCAL]:
+        normalized[CONF_RELAY_SNOOP_HOST] = DEFAULT_RELAY_SNOOP_HOST
+        normalized[CONF_SNOOP_SOCKET] = default_snoop_socket_for_container(
+            normalized[CONF_RELAY_SNOOP_PORT]
+        )
+    elif not normalized.get(CONF_SNOOP_SOCKET):
+        normalized[CONF_SNOOP_SOCKET] = default_snoop_socket_for_container(
+            normalized[CONF_RELAY_SNOOP_PORT]
+        )
 
-	return normalized
+    return normalized
