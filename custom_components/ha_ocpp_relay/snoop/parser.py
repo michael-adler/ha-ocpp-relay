@@ -1,8 +1,9 @@
 """Parser that converts snooped OCPP payloads into normalized Home Assistant sensors."""
 
 import logging
+from typing import Any
 
-from .models import OCPPSensorData
+from ..shared.models import OCPPSensorData
 
 
 class OCPPFilter:
@@ -13,24 +14,31 @@ class OCPPFilter:
         self._logger = logging.getLogger(__name__)
         self._manufacturer: dict[str, str | None] = {}
 
-    def filter(self, msg: dict) -> list[OCPPSensorData] | None:
+    @staticmethod
+    def _field(msg: Any, key: str, default=None):
+        """Read a message field from dict payloads or dataclass/object envelopes."""
+        if isinstance(msg, dict):
+            return msg.get(key, default)
+        return getattr(msg, key, default)
+
+    def filter(self, msg: Any) -> list[OCPPSensorData] | None:
         """Translate one snoop envelope into zero or more normalized sensors.
 
         This is the protocol boundary where raw OCPP message arrays become
         stable sensor records consumed by the Home Assistant sensor platform.
         """
-        if msg.get("event") != "Message":
+        if self._field(msg, "event") != "Message":
             return None
-        if msg.get("sender") != "CP":
+        if self._field(msg, "sender") != "CP":
             return None
 
-        cp_id = msg.get("cp_id") or "unknown"
-        protocol = msg.get("protocol")
+        cp_id = self._field(msg, "cp_id") or "unknown"
+        protocol = self._field(msg, "protocol")
         if protocol and protocol.lower().startswith("ocpp"):
             # Normalize values like "ocpp1.6" -> "1.6" for version dispatch below.
             protocol = protocol[4:]
 
-        ocpp = msg.get("payload")
+        ocpp = self._field(msg, "payload")
         # OCPP CALL frames are [2, unique_id, action, payload].
         if not isinstance(ocpp, list) or len(ocpp) < 4:
             return None
@@ -43,7 +51,7 @@ class OCPPFilter:
         if not self._manufacturer[cp_id]:
             self._manufacturer[cp_id] = self._get_manufacturer(ocpp)
 
-        timestamp = msg.get("timestamp")
+        timestamp = self._field(msg, "timestamp")
         if ocpp[2] == "Heartbeat":
             # Heartbeat does not carry measured values; use receive timestamp as sensor state.
             return [

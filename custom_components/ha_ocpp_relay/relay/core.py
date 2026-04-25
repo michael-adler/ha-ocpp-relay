@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from dataclasses import asdict
 import json
 import logging
-from typing import Any, Literal
 
 import websockets
+
+from ..shared.models import MessageData
 
 
 def basic_auth_header(username: str, password: str) -> tuple[str, str]:
@@ -19,21 +19,6 @@ def basic_auth_header(username: str, password: str) -> tuple[str, str]:
     user_pass = f"{username}:{password}"
     basic_credentials = base64.b64encode(user_pass.encode()).decode()
     return ("Authorization", f"Basic {basic_credentials}")
-
-
-@dataclass
-class MessageData:
-    """Message passed on the relay snoop stream."""
-
-    event: Literal["Connection", "Disconnection", "Message"]
-    sender: Literal["CP", "CSMS"]
-    protocol: str | None = None
-    cp_id: str | None = None
-    payload: Any = field(default_factory=dict)
-    timestamp: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    )
-
 
 class SnoopWebSocketServer:
     """Forward all snoop queue messages to each connected client."""

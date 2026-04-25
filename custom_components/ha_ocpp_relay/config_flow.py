@@ -94,6 +94,23 @@ def _defaults_from_mapping(mapping: dict | None) -> dict:
     }
 
 
+def _merge_flow_input(defaults: dict, user_input: dict, is_local: bool) -> dict:
+    """Merge current defaults with submitted form values and selected mode."""
+    raw = dict(defaults)
+    raw.update(user_input)
+    raw[CONF_RELAY_IS_LOCAL] = is_local
+    return _normalize_config(raw)
+
+
+def _detail_form(step_id: str, defaults: dict, is_local: bool, errors: dict | None = None) -> dict:
+    """Build parameters for the detailed config form step."""
+    return {
+        "step_id": step_id,
+        "data_schema": _details_schema(defaults, is_local),
+        "errors": errors or {},
+    }
+
+
 class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
@@ -101,6 +118,17 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize the instance state."""
         self._is_local = DEFAULT_RELAY_IS_LOCAL
         self._defaults = _defaults_from_mapping({})
+
+    def _show_details_form(self, *, errors: dict | None = None) -> FlowResult:
+        """Show the detailed settings form for initial setup."""
+        return self.async_show_form(
+            **_detail_form("user_details", self._defaults, self._is_local, errors)
+        )
+
+    def _validate_detail_input(self, user_input: dict) -> tuple[dict, dict[str, str]]:
+        """Normalize submitted detail values and return any form errors."""
+        config = _merge_flow_input(self._defaults, user_input, self._is_local)
+        return config, _validate_config(config)
 
     async def async_step_user(self, user_input=None) -> FlowResult:
         """Collect integration mode, then route to the detailed settings step."""
@@ -121,29 +149,17 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         not configured twice.
         """
         if user_input is not None:
-            raw = dict(self._defaults)
-            raw.update(user_input)
-            raw[CONF_RELAY_IS_LOCAL] = self._is_local
-
-            config = _normalize_config(raw)
-            errors = _validate_config(config)
+            config, errors = self._validate_detail_input(user_input)
             if errors:
                 self._defaults = _defaults_from_mapping(config)
-                return self.async_show_form(
-                    step_id="user_details",
-                    data_schema=_details_schema(self._defaults, self._is_local),
-                    errors=errors,
-                )
+                return self._show_details_form(errors=errors)
 
             await self.async_set_unique_id(config[CONF_SNOOP_SOCKET])
             self._abort_if_unique_id_configured()
             return self.async_create_entry(title="HA OCPP Relay", data=config)
 
         self._defaults = _defaults_from_mapping(self._defaults)
-        return self.async_show_form(
-            step_id="user_details",
-            data_schema=_details_schema(self._defaults, self._is_local),
-        )
+        return self._show_details_form()
 
     @staticmethod
     def async_get_options_flow(config_entry):
@@ -160,6 +176,17 @@ class HaOcppRelayOptionsFlow(config_entries.OptionsFlow):
         self._defaults = _defaults_from_mapping(merged)
         self._is_local = self._defaults[CONF_RELAY_IS_LOCAL]
 
+    def _show_details_form(self, *, errors: dict | None = None) -> FlowResult:
+        """Show the detailed settings form for options editing."""
+        return self.async_show_form(
+            **_detail_form("details", self._defaults, self._is_local, errors)
+        )
+
+    def _validate_detail_input(self, user_input: dict) -> tuple[dict, dict[str, str]]:
+        """Normalize submitted detail values and return any form errors."""
+        config = _merge_flow_input(self._defaults, user_input, self._is_local)
+        return config, _validate_config(config)
+
     async def async_step_init(self, user_input=None) -> FlowResult:
         """Collect mode selection for options editing."""
         if user_input is not None:
@@ -175,24 +202,12 @@ class HaOcppRelayOptionsFlow(config_entries.OptionsFlow):
     async def async_step_details(self, user_input=None) -> FlowResult:
         """Validate and save edited options for an existing entry."""
         if user_input is not None:
-            raw = dict(self._defaults)
-            raw.update(user_input)
-            raw[CONF_RELAY_IS_LOCAL] = self._is_local
-
-            config = _normalize_config(raw)
-            errors = _validate_config(config)
+            config, errors = self._validate_detail_input(user_input)
             if errors:
                 self._defaults = _defaults_from_mapping(config)
-                return self.async_show_form(
-                    step_id="details",
-                    data_schema=_details_schema(self._defaults, self._is_local),
-                    errors=errors,
-                )
+                return self._show_details_form(errors=errors)
 
             return self.async_create_entry(title="", data=config)
 
         self._defaults = _defaults_from_mapping(self._defaults)
-        return self.async_show_form(
-            step_id="details",
-            data_schema=_details_schema(self._defaults, self._is_local),
-        )
+        return self._show_details_form()

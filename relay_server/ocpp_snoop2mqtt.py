@@ -4,14 +4,11 @@
 import argparse
 import asyncio
 import logging
-from logging.handlers import SysLogHandler
-import os
 import sys
-
-import yaml
 
 from relay_server.common.ocppfilter import OCPPFilter
 from relay_server.common.ocppsnoop import receive_ocpp_snoop
+from relay_server.cli.common import apply_yaml_section_defaults, configure_logging
 from relay_server.mqtt.mqttpublish import MQTTPublisher
 
 
@@ -72,25 +69,7 @@ Map a stream of OCPP messages to MQTT topics.
     group.add_argument("-v", "--verbose", action="store_true", help="""Verbose output.""")
     group.add_argument("-q", "--quiet", action="store_true", help="""Reduce output.""")
 
-    preliminary = parser.parse_known_args()[0]
-
-    yaml_defaults = {}
-    if preliminary and preliminary.config:
-        try:
-            with open(preliminary.config, "r", encoding="utf-8") as file_obj:
-                cfg = yaml.safe_load(file_obj) or {}
-                yaml_defaults = cfg.get("snoop2mqtt", {}) if isinstance(cfg, dict) else {}
-        except FileNotFoundError:
-            print(f"Config file not found: {preliminary.config}", file=sys.stderr)
-            sys.exit(1)
-        except Exception as err:  # noqa: BLE001
-            print(f"Error loading config file {preliminary.config}: {err}", file=sys.stderr)
-            sys.exit(1)
-
-    for key, val in yaml_defaults.items():
-        argname = f"--{key.replace('_', '-')}"
-        if not any(argname in arg for arg in sys.argv[1:]):
-            parser.set_defaults(**{key: val})
+    apply_yaml_section_defaults(parser, section="snoop2mqtt")
 
     return parser.parse_args()
 
@@ -130,29 +109,12 @@ def main():
     """Parse arguments, initialize logging, and run snoop-to-MQTT bridge."""
     args = parse_args()
 
-    level = logging.DEBUG if args.verbose else logging.INFO
-    if args.quiet:
-        level = logging.WARNING
-
-    if args.syslog:
-        address = "/dev/log" if os.path.exists("/dev/log") else ("localhost", 514)
-        try:
-            handler = SysLogHandler(address=address, facility=SysLogHandler.LOG_LOCAL0)
-            logging.basicConfig(
-                level=level,
-                handlers=[handler],
-                format="ocpp-snoop2mqtt: %(levelname)s - %(threadName)s - %(name)s - %(message)s",
-            )
-        except Exception:  # noqa: BLE001
-            logging.basicConfig(
-                level=level,
-                format="%(asctime)s - [%(levelname)-4.4s] - [%(threadName)-7.7s] - [%(name)-20.20s] - %(message)s",
-            )
-    else:
-        logging.basicConfig(
-            level=level,
-            format="%(asctime)s - [%(levelname)-4.4s] - [%(threadName)-7.7s] - [%(name)-20.20s] - %(message)s",
-        )
+    configure_logging(
+        app_name="ocpp-snoop2mqtt",
+        verbose=args.verbose,
+        quiet=args.quiet,
+        use_syslog=args.syslog,
+    )
 
     try:
         asyncio.run(core(args))

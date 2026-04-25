@@ -3,15 +3,11 @@
 
 import argparse
 import asyncio
-import logging
-from logging.handlers import SysLogHandler
-import os
 import ssl
 import sys
 
-import yaml
-
 from custom_components.ha_ocpp_relay.relay.core import OCPPRelay, SnoopWebSocketServer
+from relay_server.cli.common import apply_yaml_section_defaults, configure_logging
 
 
 def parse_args():
@@ -31,18 +27,7 @@ def parse_args():
     group.add_argument("-q", "--quiet", action="store_true")
 
     # Parse once to discover config path, then apply YAML values as parser defaults.
-    preliminary = parser.parse_known_args()[0]
-    yaml_defaults = {}
-    if preliminary.config:
-        with open(preliminary.config, "r", encoding="utf-8") as file_obj:
-            cfg = yaml.safe_load(file_obj) or {}
-            yaml_defaults = cfg.get("relay", {}) if isinstance(cfg, dict) else {}
-
-    for key, value in yaml_defaults.items():
-        argname = f"--{key.replace('_', '-')}"
-        # CLI flags keep highest precedence; YAML only fills values not passed on argv.
-        if not any(argname in arg for arg in sys.argv[1:]):
-            parser.set_defaults(**{key: value})
+    apply_yaml_section_defaults(parser, section="relay")
 
     args = parser.parse_args()
     if not args.cpms:
@@ -88,23 +73,12 @@ def main():
     """Configure logging and run the relay server CLI entrypoint."""
     args = parse_args()
 
-    level = logging.DEBUG if args.verbose else logging.INFO
-    if args.quiet:
-        level = logging.WARNING
-
-    if args.syslog:
-        address = "/dev/log" if os.path.exists("/dev/log") else ("localhost", 514)
-        handler = SysLogHandler(address=address, facility=SysLogHandler.LOG_LOCAL0)
-        logging.basicConfig(
-            level=level,
-            handlers=[handler],
-            format="ocpp-relay-server: %(levelname)s - %(threadName)s - %(name)s - %(message)s",
-        )
-    else:
-        logging.basicConfig(
-            level=level,
-            format="%(asctime)s - [%(levelname)-4.4s] - [%(threadName)-7.7s] - [%(name)-20.20s] - %(message)s",
-        )
+    configure_logging(
+        app_name="ocpp-relay-server",
+        verbose=args.verbose,
+        quiet=args.quiet,
+        use_syslog=args.syslog,
+    )
 
     try:
         asyncio.run(core(args))

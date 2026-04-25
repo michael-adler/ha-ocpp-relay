@@ -22,6 +22,8 @@ class MQTTPublisher:
     ):
         self._logger = logging.getLogger(__name__)
         self._queue: asyncio.Queue = asyncio.Queue()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._connected_event = asyncio.Event()
         self._broker_host = broker_host
         self._broker_port = broker_port
         self._broker_username = broker_username
@@ -36,7 +38,6 @@ class MQTTPublisher:
         self._mqtt.on_connect_fail = self._mqtt_on_connect_fail
         self._mqtt.on_message = self._mqtt_on_message
 
-        self._broker_connection_failed = False
         self._published_discoveries: dict[str, dict] = {}
 
     async def publish_data(self, data: SensorData):
@@ -47,8 +48,7 @@ class MQTTPublisher:
         """Consume queue items and publish to MQTT until stopped."""
         last_msg_info = None
 
-        while not self._connected:
-            await asyncio.sleep(0.1)
+        await self._connected_event.wait()
 
         while True:
             try:
@@ -67,22 +67,19 @@ class MQTTPublisher:
 
             if self._exit_task and self._queue.empty():
                 break
-            if self._broker_connection_failed:
-                self._logger.error("Broker connection failed, stopping publisher.")
-                break
 
         if last_msg_info:
             last_msg_info.wait_for_publish()
         self._mqtt.disconnect()
         self._mqtt.loop_stop()
-        if self._broker_connection_failed:
-            raise RuntimeError("Broker connection failed, stopped publisher.")
         self._logger.info("MQTTPublisher run() task exiting.")
         self._exit_task = False
 
     async def start(self):
         """Connect to MQTT and start async publication loop."""
         self._logger.info("Connecting to MQTT broker at %s:%s...", self._broker_host, self._broker_port)
+        self._loop = asyncio.get_running_loop()
+        self._connected_event.clear()
 
         self._mqtt.username_pw_set(username=self._broker_username, password=self._broker_password)
         self._mqtt.loop_start()
@@ -109,7 +106,6 @@ class MQTTPublisher:
                 self._broker_port,
                 rc,
             )
-            self._broker_connection_failed = True
             return
 
         self._logger.info("Connection successful to %s:%s", self._broker_host, self._broker_port)
@@ -122,6 +118,8 @@ class MQTTPublisher:
             self._logger.exception("Failed to subscribe to %s", status_topic)
 
         self._connected = True
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._connected_event.set)
 
     def _mqtt_on_connect_fail(self, client, userdata):
         """Handle broker connect-failed callback."""
@@ -170,7 +168,7 @@ class MQTTPublisher:
                     "unique_id": f"{data.unique_id}_value",
                     "name": data.name,
                     "expire_after": 0,
-                    "force_update": "true",
+                    "force_update": True,
                 }
             },
             "state_topic": state_topic,
@@ -187,7 +185,7 @@ class MQTTPublisher:
             component["device_class"] = data.device_class
             component["value_template"] = "{{ value_json.value }}"
             component["expire_after"] = 3600
-            component["force_update"] = "false"
+            component["force_update"] = False
         else:
             component["value_template"] = "{{ value_json.value|float }}"
             component["unit_of_measurement"] = data.unit
