@@ -2,7 +2,7 @@
   "domain": "ha_ocpp_relay",
   "name": "HA OCPP Relay",
   "codeowners": [
-    "@madler"
+    "@michael-adler"
   ],
   "config_flow": true,
   "documentation": "https://github.com/michael-adler/ha-ocpp-relay",
