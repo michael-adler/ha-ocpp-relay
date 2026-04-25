@@ -1,3 +1,5 @@
+"""Bidirectional websocket relay between charge points and a remote CSMS endpoint."""
+
 import asyncio
 import base64
 import json

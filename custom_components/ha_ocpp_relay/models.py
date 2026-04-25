@@ -1,3 +1,5 @@
+"""Data models for OCPP-derived sensor state stored in the integration runtime."""
+
 from dataclasses import dataclass
 from typing import Any
 

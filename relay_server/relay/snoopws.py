@@ -1,3 +1,5 @@
+"""Snoop websocket server that forwards queued relay events to connected observers."""
+
 import asyncio
 from dataclasses import asdict
 import json

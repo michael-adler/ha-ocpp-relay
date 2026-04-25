@@ -1,3 +1,5 @@
+"""Websocket client that consumes relay snoop events and emits HA sensor updates."""
+
 import asyncio
 import json
 import logging
@@ -52,8 +54,8 @@ class OCPPSnoopClient:
             except asyncio.CancelledError:
                 raise
             except Exception as err:
-                self._logger.warning("Snoop websocket error: %s. Reconnecting in 5 seconds.", err)
-                await asyncio.sleep(5)
+                self._logger.warning("Snoop websocket error: %s. Reconnecting in 15 seconds.", err)
+                await asyncio.sleep(15)
 
     async def _handle_message(self, message: str) -> None:
         try:

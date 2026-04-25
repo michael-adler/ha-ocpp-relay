@@ -1,3 +1,5 @@
+"""Parser that converts snooped OCPP payloads into normalized Home Assistant sensors."""
+
 import logging
 
 from .models import OCPPSensorData

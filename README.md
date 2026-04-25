@@ -6,6 +6,7 @@
 
 1. This repository is structured as a Home Assistant HACS custom integration.
 2. The MQTT snoop client is replaced by a Home Assistant-native integration that creates sensor entities directly inside Home Assistant.
+3. The relay process can now be managed directly by the Home Assistant integration.
 
 ## Repository layout
 
@@ -34,8 +35,10 @@ flowchart LR
 
 ### Single host
 
-- Run the relay and Home Assistant on the same machine or LAN endpoint.
-- Configure the integration snoop socket as `ws://localhost:8501/`.
+- Enable local relay mode in integration options.
+- The integration starts and supervises the relay process automatically.
+- Default snoop socket is `ws://127.0.0.1:8501/` (container-local relay snoop endpoint).
+- If the relay process crashes, it is restarted automatically after 15 seconds.
 
 ### Separate relay host
 
@@ -52,6 +55,7 @@ python -m relay_server.ocpp_relay_server \
 
 - In the Home Assistant integration, set the snoop socket to the relay host, for example:
 	`ws://relay-host-or-ip:8501/`
+- Disable local relay mode in integration options.
 
 - Ensure firewall/network rules allow Home Assistant to reach the relay snoop port.
 - The snoop websocket has no application-layer authentication; run it on a trusted network,
@@ -63,9 +67,18 @@ python -m relay_server.ocpp_relay_server \
 2. Install `ha-ocpp-relay`.
 3. Restart Home Assistant.
 4. Add integration: **Settings -> Devices & Services -> Add Integration -> HA OCPP Relay**.
-5. Set the snoop websocket URL (for example `ws://localhost:8501/`).
+5. Configure relay settings in the integration UI:
+	- `relay_is_local`: whether Home Assistant should run the relay process.
+	- `cpms_url`: remote CSMS URL used by the relay process (required when local relay is enabled).
+	- `relay_ocpp_host` and `relay_ocpp_port`: relay bind address/port for charge points.
+	- `relay_snoop_host` and `relay_snoop_port`: relay snoop bind address/port.
+	- `snoop_socket`: URL used by the HA snoop client.
+
+All settings are editable later from integration options; updates reload the integration and apply new values.
 
 ## Running the relay server
+
+If `relay_is_local` is enabled, the integration runs the relay process and this step is not required.
 
 ```bash
 python -m relay_server.ocpp_relay_server --cpms wss://<actual-ocpp-server>/ws/webSocket

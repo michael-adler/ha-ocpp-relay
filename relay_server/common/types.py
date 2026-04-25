@@ -1,3 +1,5 @@
+"""Shared dataclasses used by relay, snoop, and OCPP filtering components."""
+
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal

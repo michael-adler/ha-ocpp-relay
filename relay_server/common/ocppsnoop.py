@@ -1,3 +1,5 @@
+"""Websocket snoop broadcaster that publishes captured relay message events to clients."""
+
 import json
 import logging
 

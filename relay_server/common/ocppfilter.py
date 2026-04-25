@@ -1,3 +1,5 @@
+"""Filter and parser utilities for converting OCPP messages into sensor payloads."""
+
 import logging
 
 from relay_server.common.types import MessageData, SensorData

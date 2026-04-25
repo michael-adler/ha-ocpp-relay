@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""CLI entrypoint that starts the standalone OCPP relay and snoop websocket server."""
 
 import argparse
 import asyncio

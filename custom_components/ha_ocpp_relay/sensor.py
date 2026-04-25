@@ -1,3 +1,5 @@
+"""Dynamic sensor entity platform for values discovered from OCPP snoop traffic."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -20,7 +22,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    client: OCPPSnoopClient = hass.data[DOMAIN][entry.entry_id]
+    client: OCPPSnoopClient = hass.data[DOMAIN][entry.entry_id]["client"]
     known_entities: dict[str, OCPPSensorEntity] = {}
 
     def add_entity(unique_id: str) -> None:
