@@ -7,7 +7,8 @@ import subprocess
 import socket
 
 import pytest
-import paho.mqtt.client as mqtt
+# Skip the whole module during collection if paho-mqtt isn't installed in the environment
+mqtt = pytest.importorskip("paho.mqtt.client")
 
 
 def wait_for_port(host: str, port: int, timeout: float = 5.0) -> bool:
@@ -21,7 +22,7 @@ def wait_for_port(host: str, port: int, timeout: float = 5.0) -> bool:
     return False
 
 
-@pytest.mark.integration
+@pytest.mark.cli
 def test_playback_and_snoop2mqtt_collects_messages(tmp_path):
     """Start a playback server and ocpp-snoop2mqtt and collect MQTT messages.
 

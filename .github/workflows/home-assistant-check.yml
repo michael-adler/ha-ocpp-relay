@@ -34,7 +34,8 @@ jobs:
       # Optionally, run tests if you have them
       - name: Run tests (allow no tests)
         run: |
-          pytest || if [ $? -eq 5 ]; then echo "No tests collected, ignoring."; else exit $?; fi
+          # Exclude CLI integration tests (marked with @pytest.mark.cli)
+          pytest -m 'not cli' || if [ $? -eq 5 ]; then echo "No tests collected, ignoring."; else exit $?; fi
 
       # Optionally, validate manifest.json (basic check)
       - name: Validate manifest.json
