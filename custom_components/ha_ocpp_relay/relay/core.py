@@ -46,6 +46,23 @@ class SnoopWebSocketServer:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._forward_task
             self._forward_task = None
+        # Politely close any remaining snoop client sockets.
+        for ws in list(self._snoop_sockets):
+            try:
+                if getattr(ws, "open", False):
+                    try:
+                        await ws.close(code=1000, reason="server stopping")
+                    except TypeError:
+                        await ws.close()
+
+                    wait_coro = getattr(ws, "wait_closed", None)
+                    if callable(wait_coro):
+                        with contextlib.suppress(Exception):
+                            await asyncio.wait_for(wait_coro(), timeout=1.0)
+            except Exception:
+                pass
+            finally:
+                self._snoop_sockets.discard(ws)
 
     async def _forward_messages(self) -> None:
         """Consume relay events and broadcast them to all snoop clients."""
@@ -70,7 +87,22 @@ class SnoopWebSocketServer:
         except (websockets.exceptions.ConnectionClosed, websockets.exceptions.ConnectionClosedOK):
             self._logger.info("Snoop connection closed")
         finally:
-            self._snoop_sockets.discard(ws)
+            # Ensure polite close on server-side when connection handling ends.
+            try:
+                if getattr(ws, "open", False):
+                    try:
+                        await ws.close(code=1000, reason="server closing")
+                    except TypeError:
+                        await ws.close()
+
+                    wait_coro = getattr(ws, "wait_closed", None)
+                    if callable(wait_coro):
+                        with contextlib.suppress(Exception):
+                            await asyncio.wait_for(wait_coro(), timeout=1.0)
+            except Exception:
+                pass
+            finally:
+                self._snoop_sockets.discard(ws)
 
 
 class OCPPRelay:
@@ -159,6 +191,22 @@ class OCPPRelay:
                     if not task.done():
                         task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
+
+                # Politely close both websockets if still open.
+                for sock in (cp_ws, csms_ws):
+                    try:
+                        if getattr(sock, "open", False):
+                            try:
+                                await sock.close(code=1000, reason="relay shutdown")
+                            except TypeError:
+                                await sock.close()
+
+                            wait_coro = getattr(sock, "wait_closed", None)
+                            if callable(wait_coro):
+                                with contextlib.suppress(Exception):
+                                    await asyncio.wait_for(wait_coro(), timeout=1.0)
+                    except Exception:
+                        pass
 
     async def _relay(
         self,
