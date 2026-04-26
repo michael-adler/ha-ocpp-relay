@@ -59,7 +59,7 @@ class OCPPFilter:
                     cp_id=cp_id,
                     topic="heartbeat",
                     unique_id=f"OCPP_{cp_id}_heartbeat",
-                    name=f"Heartbeat CP {cp_id}",
+                    name=f"OCPP Heartbeat CP {cp_id}",
                     device_class="timestamp",
                     value=timestamp,
                     manufacturer=self._manufacturer[cp_id],
@@ -128,9 +128,9 @@ class OCPPFilter:
                 pass
 
         if not evse_id:
-            name = f"{value_type.replace('-', ' ')} {location} CP {cp_id}"
+            name = f"OCPP {value_type.replace('-', ' ')} {location} CP {cp_id}"
         else:
-            name = f"C{evse_id} {value_type.replace('-', ' ')} {location} CP {cp_id}"
+            name = f"OCPP C{evse_id} {value_type.replace('-', ' ')} {location} CP {cp_id}"
 
         return OCPPSensorData(
             cp_id=cp_id,

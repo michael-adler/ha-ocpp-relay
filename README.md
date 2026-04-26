@@ -116,9 +116,3 @@ ocpp-snoop-recorder --snoop-socket ws://127.0.0.1:8501/ --output output.json
 ## Configuration example
 
 See `configs/configuration_example.yaml`.
-
-## Release versioning
-
-- Python package version comes from git tags via `setuptools-scm`.
-- Home Assistant manifest version is synced automatically by GitHub Actions on release publish.
-- Use release tags like `v0.2.0` (or `0.2.0`). The workflow strips an optional `v` prefix.
