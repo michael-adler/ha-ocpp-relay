@@ -8,7 +8,7 @@ import websockets
 from relay_server.common.types import MessageData
 
 
-async def receive_ocpp_snoop(ws_uri: str):
+async def receive_ocpp_snoop(ws_uri: str, exit_on_disconnect: bool = False):
     """Yield MessageData objects from the relay snoop websocket."""
 
     logger = logging.getLogger(__name__)
@@ -22,8 +22,17 @@ async def receive_ocpp_snoop(ws_uri: str):
                     yield MessageData(**data)
                 except json.JSONDecodeError as err:
                     logger.error("Error decoding JSON: %s", err)
-        except websockets.exceptions.ConnectionClosed as err:
-            logger.warning("Snoop connection closed (%s: %s). Retrying...", err.code, err.reason)
+        except (websockets.exceptions.ConnectionClosed, websockets.exceptions.ConnectionClosedOK) as err:
+            logger.warning("Snoop connection closed (%s: %s). Retrying...", getattr(err, 'code', None), getattr(err, 'reason', None))
+            if exit_on_disconnect:
+                logger.info("Exiting receive_ocpp_snoop due to exit_on_disconnect flag")
+                return
+
+        # If the inner read loop ended without an exception it means the connection
+        # closed cleanly; respect exit_on_disconnect in that case too.
+        if exit_on_disconnect:
+            logger.info("Snoop connection closed (normal); exiting due to exit_on_disconnect flag")
+            return
 
 
 def receive_ocpp_from_file(file_path: str):

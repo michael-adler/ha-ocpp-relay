@@ -69,17 +69,23 @@ Map a stream of OCPP messages to MQTT topics.
     group.add_argument("-v", "--verbose", action="store_true", help="""Verbose output.""")
     group.add_argument("-q", "--quiet", action="store_true", help="""Reduce output.""")
 
+    parser.add_argument(
+        "--exit-on-snoop-disconnect",
+        action="store_true",
+        help="Exit if snoop connection closes (mostly for test scripts).",
+    )
+
     apply_yaml_section_defaults(parser, section="snoop2mqtt")
 
     return parser.parse_args()
 
 
-async def process_messages(publisher: MQTTPublisher, snoop_socket: str):
+async def process_messages(publisher: MQTTPublisher, snoop_socket: str, exit_on_disconnect: bool = False):
     """Consume snoop stream, map OCPP frames, and enqueue MQTT publications."""
     logger = logging.getLogger(__name__)
     ocpp_filter = OCPPFilter()
 
-    async for msg in receive_ocpp_snoop(ws_uri=snoop_socket):
+    async for msg in receive_ocpp_snoop(ws_uri=snoop_socket, exit_on_disconnect=exit_on_disconnect):
         filtered = ocpp_filter.filter(msg)
         if filtered:
             for message in filtered:
@@ -101,7 +107,7 @@ async def core(args):
 
     await asyncio.gather(
         publisher.start(),
-        process_messages(publisher, args.snoop_socket),
+        process_messages(publisher, args.snoop_socket, exit_on_disconnect=args.exit_on_snoop_disconnect),
     )
 
 

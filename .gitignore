@@ -4,3 +4,7 @@ __pycache__/
 run_env/
 .mypy_cache/
 .pytest_cache/
+dist/
+build/
+*.egg-info/
+.eggs/
