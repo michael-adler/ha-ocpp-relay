@@ -154,7 +154,8 @@ class OCPPFilter:
             cable_id = payload.get("connectorId")
             topic = f"{cable_id}/status"
             unique_id = f"OCPP_{cp_id}_{cable_id}_status"
-            name = f"Status CP {cp_id}" if not cable_id else f"C{cable_id} Status CP {cp_id}"
+            # Keep naming consistent with other sensors by prefixing with "OCPP "
+            name = f"OCPP Status CP {cp_id}" if not cable_id else f"OCPP C{cable_id} Status CP {cp_id}"
             return [
                 OCPPSensorData(
                     cp_id=cp_id,
@@ -196,7 +197,8 @@ class OCPPFilter:
             cable_id = payload.get("evseId")
             topic = f"{cable_id}/status"
             unique_id = f"OCPP_{cp_id}_{cable_id}_status"
-            name = f"Status CP {cp_id}" if not cable_id else f"C{cable_id} Status CP {cp_id}"
+            # Keep naming consistent with other sensors by prefixing with "OCPP "
+            name = f"OCPP Status CP {cp_id}" if not cable_id else f"OCPP C{cable_id} Status CP {cp_id}"
             return [
                 OCPPSensorData(
                     cp_id=cp_id,
