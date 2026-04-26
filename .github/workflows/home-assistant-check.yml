@@ -1,0 +1,50 @@
+# This workflow sets up Home Assistant and runs integration checks for your custom component.
+name: Home Assistant Integration Checks
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  home-assistant-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Home Assistant requirements
+        run: |
+          python -m pip install --upgrade pip
+          pip install homeassistant
+
+
+      # Install Home Assistant and run tests/validation
+      - name: Install Home Assistant and dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install homeassistant pytest
+
+      # Optionally, run tests if you have them
+      - name: Run tests (allow no tests)
+        run: |
+          pytest || if [ $? -eq 5 ]; then echo "No tests collected, ignoring."; else exit $?; fi
+
+      # Optionally, validate manifest.json (basic check)
+      - name: Validate manifest.json
+        run: |
+          python -c 'import json; json.load(open("custom_components/ha_ocpp_relay/manifest.json"))'
+
+      # Optionally, run tests (uncomment if you have tests)
+      # - name: Install test requirements
+      #   run: |
+      #     pip install -r requirements_test.txt
+      #     pip install pytest homeassistant
+      # - name: Run tests
+      #   run: pytest
