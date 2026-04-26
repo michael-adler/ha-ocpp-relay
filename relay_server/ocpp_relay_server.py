@@ -13,18 +13,51 @@ from relay_server.cli.common import apply_yaml_section_defaults, configure_loggi
 def parse_args():
     """Parse CLI arguments and optional YAML defaults for relay startup."""
     parser = argparse.ArgumentParser(description="Relay OCPP traffic between a charge point and a CSMS.")
-    parser.add_argument("--config", type=str, default=None)
-    parser.add_argument("--cpms", type=str, default=None)
-    parser.add_argument("--ocpp-host", type=str, default=None)
-    parser.add_argument("--ocpp-port", type=int, default=8500)
-    parser.add_argument("--snoop-host", type=str, default="localhost")
-    parser.add_argument("--snoop-port", type=int, default=8501)
-    parser.add_argument("--ssl-cert", default=None)
-    parser.add_argument("--ssl-key", default=None)
-    parser.add_argument("--syslog", action="store_true")
+    parser.add_argument(
+        "--config", type=str, default=None,
+        help="""Path to YAML config file. Values in a 'relay' section will be used as defaults."""
+    )
+    parser.add_argument(
+        "--cpms", type=str, default=None,
+        help="""URL of the real CPMS."""
+    )
+    parser.add_argument(
+        "--ocpp-host", type=str, default=None,
+        help="""OCPP relay server interface address (default: all interfaces)."""
+    )
+    parser.add_argument(
+        "--ocpp-port", type=int, default=8500,
+        help="""OCPP relay server port for charge point connections (default: %(default)d)."""
+    )
+    parser.add_argument(
+        "--snoop-host", type=str, default="localhost",
+        help="""Snoop server interface address (default: %(default)s)."""
+    )
+    parser.add_argument(
+        "--snoop-port", type=int, default=8501,
+        help="""Snoop server port for clients that monitor OCPP traffic (default: %(default)d)."""
+    )
+    parser.add_argument(
+        "--ssl-cert", default=None,
+        help="""Path to SSL certificate file (default: None). Some chargers don't store trust chains and require that certificates are loaded onto the charger explicitly."""
+    )
+    parser.add_argument(
+        "--ssl-key", default=None,
+        help="""Path to SSL private key file (default: None)."""
+    )
+    parser.add_argument(
+        "--syslog", action="store_true",
+        help="""Write logs to syslog instead of stdout."""
+    )
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("-v", "--verbose", action="store_true")
-    group.add_argument("-q", "--quiet", action="store_true")
+    group.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="""Verbose output."""
+    )
+    group.add_argument(
+        "-q", "--quiet", action="store_true",
+        help="""Reduce output."""
+    )
 
     # Parse once to discover config path, then apply YAML values as parser defaults.
     apply_yaml_section_defaults(parser, section="relay")
