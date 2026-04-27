@@ -8,6 +8,10 @@ import paho.mqtt.client as mqtt_client
 
 from relay_server.common.types import SensorData
 
+# Maximum number of sensor readings buffered before the oldest are dropped.
+# Prevents unbounded memory growth when the MQTT broker is slow or unreachable.
+_MQTT_QUEUE_MAXSIZE = 1000
+
 
 class MQTTPublisher:
     """Publish filtered relay snoop data to MQTT topics and HA discovery."""
@@ -21,7 +25,7 @@ class MQTTPublisher:
         topic_prefix: str = "homeassistant",
     ):
         self._logger = logging.getLogger(__name__)
-        self._queue: asyncio.Queue = asyncio.Queue()
+        self._queue: asyncio.Queue = asyncio.Queue(maxsize=_MQTT_QUEUE_MAXSIZE)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._connected_event = asyncio.Event()
         self._broker_host = broker_host
@@ -42,8 +46,19 @@ class MQTTPublisher:
         self._published_discoveries: dict[str, dict] = {}
 
     async def publish_data(self, data: SensorData):
-        """Queue one message for publication to MQTT."""
-        await self._queue.put(data)
+        """Queue one message for publication to MQTT.
+
+        If the queue is full the message is dropped and a warning is logged
+        rather than blocking the caller indefinitely.
+        """
+        try:
+            self._queue.put_nowait(data)
+        except asyncio.QueueFull:
+            self._logger.warning(
+                "MQTT publish queue full (%d items); dropping sensor data for %s",
+                self._queue.maxsize,
+                getattr(data, "cp_id", "unknown"),
+            )
 
     async def run(self):
         """Consume queue items and publish to MQTT until stopped."""

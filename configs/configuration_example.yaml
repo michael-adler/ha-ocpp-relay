@@ -14,6 +14,10 @@ relay:
   #snoop_port: 8501
   #ssl_cert: "/path/to/cert.pem"
   #ssl_key: "/path/to/key.pem"
+  # Path to a CA certificate (or bundle) used to verify the upstream CSMS TLS
+  # certificate.  Leave commented out to use the system CA bundle.  Set this
+  # when your CSMS uses a private or self-signed certificate authority.
+  #csms_ca_cert: "/path/to/csms-ca.pem"
 
 snoop2mqtt:
   #snoop_socket: "ws://localhost:8501/"

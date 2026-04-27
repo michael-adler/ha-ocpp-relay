@@ -6,7 +6,7 @@ import asyncio
 import ssl
 import sys
 
-from custom_components.ha_ocpp_relay.relay.core import OCPPRelay, SnoopWebSocketServer
+from custom_components.ha_ocpp_relay.relay.core import OCPPRelay, SnoopWebSocketServer, SNOOP_QUEUE_MAXSIZE
 from relay_server.cli.common import apply_yaml_section_defaults, configure_logging
 
 
@@ -46,6 +46,12 @@ def parse_args():
         help="""Path to SSL private key file (default: None)."""
     )
     parser.add_argument(
+        "--csms-ca-cert", default=None,
+        help="""Path to a CA certificate (or bundle) file used to verify the upstream CSMS
+TLS certificate (default: None, uses the system CA bundle). Set this when your CSMS
+uses a private or self-signed certificate authority."""
+    )
+    parser.add_argument(
         "--syslog", action="store_true",
         help="""Write logs to syslog instead of stdout."""
     )
@@ -75,8 +81,28 @@ def get_ssl_context(ssl_cert, ssl_key):
         return None
 
     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
     ssl_context.load_cert_chain(certfile=ssl_cert, keyfile=ssl_key)
     return ssl_context
+
+
+def get_csms_ssl_context(csms_ca_cert: str | None) -> ssl.SSLContext | None:
+    """Create a TLS client context for the upstream CSMS connection.
+
+    When *csms_ca_cert* is provided the given CA file is loaded instead of
+    the system bundle.  When it is *None* and the CSMS URL starts with
+    ``wss://``, ``websockets`` will use the default context (system CA bundle,
+    verification enabled), so returning *None* is safe for the common case.
+    We only build an explicit context when a custom CA is supplied so we can
+    also enforce a TLS 1.2 minimum without touching the default context.
+    """
+    if not csms_ca_cert:
+        return None
+
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.load_verify_locations(cafile=csms_ca_cert)
+    return ctx
 
 
 async def core(args):
@@ -86,9 +112,10 @@ async def core(args):
     publishes that queue to external observers.
     """
     ssl_context = get_ssl_context(args.ssl_cert, args.ssl_key)
-    msg_queue = asyncio.Queue()
+    csms_ssl_context = get_csms_ssl_context(args.csms_ca_cert)
+    msg_queue = asyncio.Queue(maxsize=SNOOP_QUEUE_MAXSIZE)
 
-    relay = OCPPRelay(args.cpms, snoop_queue=msg_queue)
+    relay = OCPPRelay(args.cpms, snoop_queue=msg_queue, csms_ssl_context=csms_ssl_context)
     relay_server = await relay.start(args.ocpp_host, args.ocpp_port, ssl_context=ssl_context)
 
     snoop = SnoopWebSocketServer(snoop_queue=msg_queue)

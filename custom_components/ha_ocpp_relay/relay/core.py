@@ -8,11 +8,16 @@ import contextlib
 from dataclasses import asdict
 import json
 import logging
+import ssl
 
 import websockets
 import websockets.exceptions
 
 from ..shared.models import MessageData
+
+# Maximum number of pending snoop/MQTT messages before older ones are dropped.
+# Prevents unbounded memory growth when consumers are slow or disconnected.
+SNOOP_QUEUE_MAXSIZE = 1000
 
 
 def basic_auth_header(username: str, password: str) -> tuple[str, str]:
@@ -108,8 +113,21 @@ class OCPPRelay:
         csms_id: str | None = None,
         csms_pass: str | None = None,
         snoop_queue: asyncio.Queue | None = None,
+        csms_ssl_context: ssl.SSLContext | None = None,
     ) -> None:
-        """Configure CP<->CSMS relay behavior for one server instance."""
+        """Configure CP<->CSMS relay behavior for one server instance.
+
+        Args:
+            csms_url: WebSocket URL of the upstream CSMS.
+            csms_id: Optional Basic-Auth username for the CSMS connection.
+            csms_pass: Optional Basic-Auth password for the CSMS connection.
+            snoop_queue: Optional bounded queue for message observation.
+            csms_ssl_context: Optional SSL context for the upstream CSMS
+                connection.  When *None* and the CSMS URL uses ``wss://``,
+                the default system CA bundle is used (certificate verification
+                enabled).  Pass a custom ``ssl.SSLContext`` to supply a
+                private CA bundle or to adjust protocol/cipher settings.
+        """
         if not csms_url:
             raise ValueError("csms_url must not be empty")
         self._logger = logging.getLogger(__name__)
@@ -117,6 +135,7 @@ class OCPPRelay:
         self._csms_id = csms_id
         self._csms_pass = csms_pass
         self._snoop_queue = snoop_queue
+        self._csms_ssl_context = csms_ssl_context
 
     def _put_snoop(self, msg: MessageData) -> None:
         """Put a message on the snoop queue, logging if the queue is full."""
@@ -171,6 +190,7 @@ class OCPPRelay:
                 csms_uri,
                 subprotocols=[ws_subprotocol],
                 additional_headers=extra_headers,
+                ssl=self._csms_ssl_context,
             ) as csms_ws:
                 # Relay in both directions until either side closes.
                 tasks = [

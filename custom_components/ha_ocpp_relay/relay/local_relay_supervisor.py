@@ -14,7 +14,7 @@ from ..const import (
     CONF_RELAY_SNOOP_HOST,
     CONF_RELAY_SNOOP_PORT,
 )
-from .core import OCPPRelay, SnoopWebSocketServer
+from .core import OCPPRelay, SnoopWebSocketServer, SNOOP_QUEUE_MAXSIZE
 
 # Configuration errors should not trigger an infinite restart loop.
 _CONFIG_ERRORS = (ValueError, KeyError, TypeError)
@@ -53,7 +53,7 @@ class LocalRelaySupervisor:
                 if not cpms_url:
                     raise ValueError("Local relay mode requires cpms_url")
 
-                msg_queue: asyncio.Queue = asyncio.Queue()
+                msg_queue: asyncio.Queue = asyncio.Queue(maxsize=SNOOP_QUEUE_MAXSIZE)
                 relay = OCPPRelay(cpms_url, snoop_queue=msg_queue)
                 relay_server = await relay.start(
                     self._config[CONF_RELAY_OCPP_HOST],
