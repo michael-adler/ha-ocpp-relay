@@ -98,9 +98,13 @@ async def main_async(args):
         print(f"Failed to read log file: {e}", file=sys.stderr)
         sys.exit(1)
 
-    snoop_server = SnoopWebSocketServer(snoop_queue=asyncio.Queue())  # Provide a queue for the server
-    await snoop_server.start(args.snoop_host, args.snoop_port, ssl_context=None)
+    snoop_server = SnoopWebSocketServer(snoop_queue=asyncio.Queue())
+    server = await snoop_server.start(args.snoop_host, args.snoop_port, ssl_context=None)
     await stream_log_to_clients(snoop_server, log_lines)
+    # Close the listening socket and wait for all in-flight broadcast tasks to
+    # finish; without this the event loop exits before queued messages are sent.
+    server.close()
+    await server.wait_closed()
 
 
 def main():

@@ -22,8 +22,14 @@ async def receive_ocpp_snoop(ws_uri: str, exit_on_disconnect: bool = False):
                     yield MessageData(**data)
                 except json.JSONDecodeError as err:
                     logger.error("Error decoding JSON: %s", err)
-        except (websockets.exceptions.ConnectionClosed, websockets.exceptions.ConnectionClosedOK) as err:
-            logger.warning("Snoop connection closed (%s: %s). Retrying...", getattr(err, 'code', None), getattr(err, 'reason', None))
+        except websockets.exceptions.ConnectionClosed as err:
+            # ConnectionClosedOK is a subclass of ConnectionClosed and is already
+            # caught here; listing it separately is unnecessary.
+            # Use err.rcvd for the close code and reason; it is None when the
+            # connection dropped without a close frame.
+            code = err.rcvd.code if err.rcvd else None
+            reason = err.rcvd.reason if err.rcvd else ""
+            logger.warning("Snoop connection closed (%s: %s). Retrying...", code, reason)
             if exit_on_disconnect:
                 logger.info("Exiting receive_ocpp_snoop due to exit_on_disconnect flag")
                 return

@@ -44,9 +44,20 @@ def apply_yaml_section_defaults(
         print(f"Invalid '{section}' section in config file: expected mapping", file=sys.stderr)
         raise SystemExit(1)
 
+    # Determine which dest names were explicitly provided on the command line so
+    # that YAML values do not override them.  A raw substring search on argv
+    # tokens is unreliable for boolean store_true/store_false flags: e.g. if the
+    # user passes --quiet, "--verbose" is simply absent from argv so a YAML
+    # verbose:true default would still be applied.  Instead, match each action's
+    # option strings directly against the argv list.
+    cli_supplied = {
+        action.dest
+        for action in parser._actions
+        if any(opt in argv for opt in action.option_strings)
+    }
+
     for key, value in defaults.items():
-        argname = f"--{key.replace('_', '-')}"
-        if not any(argname in arg for arg in argv):
+        if key not in cli_supplied:
             parser.set_defaults(**{key: value})
 
 

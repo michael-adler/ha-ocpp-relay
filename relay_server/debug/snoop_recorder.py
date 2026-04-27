@@ -53,7 +53,10 @@ async def receive_forever(args):
                     outfile.write(json.dumps(json_msg) + "\n")
                     outfile.flush()
     except websockets.exceptions.ConnectionClosed as err:
-        print(f"Connection closed: {err.code} ({err.reason})")
+        # err.rcvd is None when the connection dropped without a close frame.
+        code = err.rcvd.code if err.rcvd else "no close frame"
+        reason = err.rcvd.reason if err.rcvd else ""
+        print(f"Connection closed: {code} ({reason})")
     except ConnectionRefusedError:
         print("Connection refused. Is the server running?")
     except Exception as err:  # noqa: BLE001

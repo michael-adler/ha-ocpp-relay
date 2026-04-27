@@ -4,7 +4,6 @@
 import argparse
 import asyncio
 import logging
-import sys
 
 from relay_server.common.ocppfilter import OCPPFilter
 from relay_server.common.ocppsnoop import receive_ocpp_snoop
@@ -126,7 +125,6 @@ def main():
         asyncio.run(core(args))
     except KeyboardInterrupt:
         print("Exiting...")
-        sys.exit(1)
 
 
 if __name__ == "__main__":
