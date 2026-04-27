@@ -4,12 +4,26 @@ import time
 import json
 import threading
 import subprocess
+import threading
 import socket
 
 import pytest
 # Skip the whole module during collection if paho-mqtt isn't installed in the environment
 mqtt = pytest.importorskip("paho.mqtt.client")
+from paho.mqtt.client import CallbackAPIVersion
 
+def wait_until(predicate, timeout=10.0, interval=0.05, desc="condition"):
+    end = time.time() + timeout
+    while time.time() < end:
+        if predicate():
+            return True
+        time.sleep(interval)
+    raise AssertionError(f"Timed out waiting for {desc}")
+
+def wait_for_process_start(proc: subprocess.Popen, timeout=5.0):
+    def alive():
+        return proc.poll() is None
+    wait_until(alive, timeout=timeout, desc="process to stay alive after start")
 
 def wait_for_port(host: str, port: int, timeout: float = 5.0) -> bool:
     end = time.time() + timeout
@@ -20,7 +34,6 @@ def wait_for_port(host: str, port: int, timeout: float = 5.0) -> bool:
         except Exception:
             time.sleep(0.1)
     return False
-
 
 @pytest.mark.cli
 def test_playback_and_snoop2mqtt_collects_messages(tmp_path):
@@ -43,22 +56,22 @@ def test_playback_and_snoop2mqtt_collects_messages(tmp_path):
             messages.append({"topic": msg.topic, "payload": None})
 
     # Prefer the new callback API when available; fall back for older paho versions.
+    assert wait_for_port("localhost", 8583, timeout=10.0), "MQTT broker not reachable"
     try:
-        client = mqtt.Client(callback_api_version=2)
-    except TypeError:
+        client = mqtt.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    except Exception:
         client = mqtt.Client()
     # Use a blocking connect so we can be sure subscription happens after connection.
     client.connect("localhost", 8583)
     client.loop_start()
+
     # Wait for the client to be connected before subscribing.
-    end = time.time() + 5.0
-    while not client.is_connected() and time.time() < end:
-        time.sleep(0.05)
-    assert client.is_connected(), "MQTT client failed to connect"
+    wait_until(lambda: client.is_connected(), timeout=5.0, desc="MQTT connect")
+
     # subscribe to all ocpp-related topics and register per-topic callbacks
-    client.subscribe([("ocpp/#", 1), ("homeassistant/#", 1)])
     client.message_callback_add("ocpp/#", on_message)
     client.message_callback_add("homeassistant/#", on_message)
+    client.subscribe([("ocpp/#", 1), ("homeassistant/#", 1)])
 
     assert wait_for_port("localhost", 8583, timeout=10.0), "MQTT broker not reachable"
 
@@ -112,6 +125,7 @@ def test_playback_and_snoop2mqtt_collects_messages(tmp_path):
     p_playback = subprocess.Popen(
         playback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=project_root, env=env
     )
+    wait_for_process_start(p_playback)
     playback_out_buf, playback_out_thread = _start_stream_reader(p_playback.stdout)
     playback_err_buf, playback_err_thread = _start_stream_reader(p_playback.stderr)
 
@@ -134,6 +148,7 @@ def test_playback_and_snoop2mqtt_collects_messages(tmp_path):
     p_snoop = subprocess.Popen(
         snoop_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=project_root, env=env
     )
+    wait_for_process_start(p_snoop)
     snoop_out_buf, snoop_out_thread = _start_stream_reader(p_snoop.stdout)
     snoop_err_buf, snoop_err_thread = _start_stream_reader(p_snoop.stderr)
 

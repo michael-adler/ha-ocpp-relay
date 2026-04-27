@@ -15,6 +15,12 @@ dependencies = [
   "websockets>=15.0.1"
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "pytest-asyncio",
+]
+
 [project.scripts]
 ocpp-relay-server = "relay_server.ocpp_relay_server:main"
 ocpp-snoop2mqtt = "relay_server.ocpp_snoop2mqtt:main"
