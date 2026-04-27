@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 import logging
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -119,7 +119,7 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
         sensor = self._sensor
         if sensor is None:
             # Only restore for energy sensors
-            if self.device_class == "energy" and self._restored_value is not None:
+            if self.device_class == SensorDeviceClass.ENERGY and self._restored_value is not None:
                 try:
                     return float(self._restored_value)
                 except (TypeError, ValueError):
@@ -139,11 +139,12 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
                 return None
 
         return sensor.value
+
     @property
     def available(self) -> bool:
         """Energy sensors are always available (show last value); others use default logic."""
         sensor = self._sensor
-        if self.device_class == "energy":
+        if self.device_class == SensorDeviceClass.ENERGY:
             # Always available if we have a value (live or restored)
             return sensor is not None or self._restored_value is not None
         # Default: available if sensor is present
@@ -155,17 +156,35 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
         sensor = self._sensor
         return None if sensor is None else sensor.unit
 
-    @property
-    def device_class(self):
-        """Map parser-derived semantic type to Home Assistant device class."""
-        sensor = self._sensor
-        return None if sensor is None else sensor.device_class
+    _DEVICE_CLASS_MAP: dict[str, SensorDeviceClass] = {
+        "current": SensorDeviceClass.CURRENT,
+        "energy": SensorDeviceClass.ENERGY,
+        "power": SensorDeviceClass.POWER,
+        "timestamp": SensorDeviceClass.TIMESTAMP,
+        "voltage": SensorDeviceClass.VOLTAGE,
+    }
+
+    _STATE_CLASS_MAP: dict[str, SensorStateClass] = {
+        "measurement": SensorStateClass.MEASUREMENT,
+        "total": SensorStateClass.TOTAL,
+        "total_increasing": SensorStateClass.TOTAL_INCREASING,
+    }
 
     @property
-    def state_class(self):
+    def device_class(self) -> SensorDeviceClass | None:
+        """Map parser-derived semantic type to Home Assistant device class."""
+        sensor = self._sensor
+        if sensor is None or sensor.device_class is None:
+            return None
+        return self._DEVICE_CLASS_MAP.get(sensor.device_class)
+
+    @property
+    def state_class(self) -> SensorStateClass | None:
         """Expose state class so long-term statistics are computed correctly."""
         sensor = self._sensor
-        return None if sensor is None else sensor.state_class
+        if sensor is None or sensor.state_class is None:
+            return None
+        return self._STATE_CLASS_MAP.get(sensor.state_class)
 
     @property
     def extra_state_attributes(self):

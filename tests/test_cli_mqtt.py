@@ -4,7 +4,6 @@ import time
 import json
 import threading
 import subprocess
-import threading
 import socket
 import logging
 

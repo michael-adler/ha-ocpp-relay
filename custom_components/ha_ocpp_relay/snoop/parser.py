@@ -127,7 +127,7 @@ class OCPPFilter:
             except (TypeError, ValueError):
                 pass
 
-        if not evse_id:
+        if evse_id is None:
             name = f"OCPP {value_type.replace('-', ' ')} {location} CP {cp_id}"
         else:
             name = f"OCPP C{evse_id} {value_type.replace('-', ' ')} {location} CP {cp_id}"
@@ -154,8 +154,7 @@ class OCPPFilter:
             cable_id = payload.get("connectorId")
             topic = f"{cable_id}/status"
             unique_id = f"OCPP_{cp_id}_{cable_id}_status"
-            # Keep naming consistent with other sensors by prefixing with "OCPP "
-            name = f"OCPP Status CP {cp_id}" if not cable_id else f"OCPP C{cable_id} Status CP {cp_id}"
+            name = f"OCPP Status CP {cp_id}" if cable_id is None else f"OCPP C{cable_id} Status CP {cp_id}"
             return [
                 OCPPSensorData(
                     cp_id=cp_id,
@@ -197,8 +196,7 @@ class OCPPFilter:
             cable_id = payload.get("evseId")
             topic = f"{cable_id}/status"
             unique_id = f"OCPP_{cp_id}_{cable_id}_status"
-            # Keep naming consistent with other sensors by prefixing with "OCPP "
-            name = f"OCPP Status CP {cp_id}" if not cable_id else f"OCPP C{cable_id} Status CP {cp_id}"
+            name = f"OCPP Status CP {cp_id}" if cable_id is None else f"OCPP C{cable_id} Status CP {cp_id}"
             return [
                 OCPPSensorData(
                     cp_id=cp_id,
@@ -217,7 +215,17 @@ class OCPPFilter:
             for meter_value in payload.get("meterValue", []):
                 for sampled_value in meter_value.get("sampledValue", []):
                     unit_obj = sampled_value.get("unitOfMeasure") or {}
-                    unit = unit_obj.get("unit", "Wh")
+                    measurand = sampled_value.get("measurand") or "Energy.Active.Import.Register"
+                    if "unit" in unit_obj:
+                        unit = unit_obj["unit"]
+                    elif measurand.startswith("Power"):
+                        unit = "W"
+                    elif measurand.startswith("Current"):
+                        unit = "A"
+                    elif measurand.startswith("Voltage"):
+                        unit = "V"
+                    else:
+                        unit = "Wh"
                     sensor = self._new_meter_data(
                         cp_id,
                         timestamp,

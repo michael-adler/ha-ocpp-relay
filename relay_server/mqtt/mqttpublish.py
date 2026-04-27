@@ -36,6 +36,7 @@ class MQTTPublisher:
         self._mqtt.connect_timeout = 60.0
         self._mqtt.on_connect = self._mqtt_on_connect
         self._mqtt.on_connect_fail = self._mqtt_on_connect_fail
+        self._mqtt.on_disconnect = self._mqtt_on_disconnect
         self._mqtt.on_message = self._mqtt_on_message
 
         self._published_discoveries: dict[str, dict] = {}
@@ -54,6 +55,9 @@ class MQTTPublisher:
             try:
                 data: SensorData = await asyncio.wait_for(self._queue.get(), timeout=5.0)
                 self._logger.info("Publishing %s", data)
+
+                if not self._connected:
+                    await self._connected_event.wait()
 
                 disc_info = self._mqtt_discover(data)
                 if disc_info:
@@ -125,6 +129,15 @@ class MQTTPublisher:
         """Handle broker connect-failed callback."""
         self._logger.error("Failed to connect to MQTT broker %s:%s", self._broker_host, self._broker_port)
 
+    def _mqtt_on_disconnect(self, client, userdata, rc, properties=None):
+        """Handle broker disconnect; clear connection state so run() waits before publishing again."""
+        self._logger.warning(
+            "Disconnected from MQTT broker %s:%s (rc=%s)", self._broker_host, self._broker_port, rc
+        )
+        self._connected = False
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._connected_event.clear)
+
     def _mqtt_on_message(self, client, userdata, msg):
         """React to broker status messages and republish discovery when needed."""
         try:
@@ -153,7 +166,7 @@ class MQTTPublisher:
 
         discover = {
             "device": {
-                "identifiers": f"cp_{data.cp_id}",
+                "identifiers": [f"cp_{data.cp_id}"],
                 "name": "EV Charge Point",
                 "serial_number": data.cp_id,
             },
@@ -167,12 +180,12 @@ class MQTTPublisher:
                     "platform": "sensor",
                     "unique_id": f"{data.unique_id}_value",
                     "name": data.name,
+                    "state_topic": state_topic,
+                    "qos": 1,
                     "expire_after": 0,
                     "force_update": True,
                 }
             },
-            "state_topic": state_topic,
-            "qos": 1,
         }
 
         if data.manufacturer:
