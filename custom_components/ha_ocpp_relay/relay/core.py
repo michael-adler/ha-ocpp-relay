@@ -10,6 +10,7 @@ import json
 import logging
 
 import websockets
+import websockets.exceptions
 
 from ..shared.models import MessageData
 
@@ -19,6 +20,24 @@ def basic_auth_header(username: str, password: str) -> tuple[str, str]:
     user_pass = f"{username}:{password}"
     basic_credentials = base64.b64encode(user_pass.encode()).decode()
     return ("Authorization", f"Basic {basic_credentials}")
+
+
+async def _close_ws(ws, *, timeout: float = 1.0) -> None:
+    """Close a websocket politely, suppressing all errors."""
+    try:
+        if not getattr(ws, "open", False):
+            return
+        try:
+            await ws.close(code=1000, reason="server closing")
+        except TypeError:
+            await ws.close()
+        wait_coro = getattr(ws, "wait_closed", None)
+        if callable(wait_coro):
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(wait_coro(), timeout=timeout)
+    except Exception:  # noqa: BLE001
+        pass
+
 
 class SnoopWebSocketServer:
     """Forward all snoop queue messages to each connected client."""
@@ -48,21 +67,8 @@ class SnoopWebSocketServer:
             self._forward_task = None
         # Politely close any remaining snoop client sockets.
         for ws in list(self._snoop_sockets):
-            try:
-                if getattr(ws, "open", False):
-                    try:
-                        await ws.close(code=1000, reason="server stopping")
-                    except TypeError:
-                        await ws.close()
-
-                    wait_coro = getattr(ws, "wait_closed", None)
-                    if callable(wait_coro):
-                        with contextlib.suppress(Exception):
-                            await asyncio.wait_for(wait_coro(), timeout=1.0)
-            except Exception:
-                pass
-            finally:
-                self._snoop_sockets.discard(ws)
+            await _close_ws(ws)
+            self._snoop_sockets.discard(ws)
 
     async def _forward_messages(self) -> None:
         """Consume relay events and broadcast them to all snoop clients."""
@@ -70,7 +76,7 @@ class SnoopWebSocketServer:
             msg = await self._snoop_queue.get()
             msg_json = json.dumps(asdict(msg))
             # Iterate over a snapshot so disconnected sockets can be removed safely.
-            for ws in self._snoop_sockets.copy():
+            for ws in list(self._snoop_sockets):
                 try:
                     await ws.send(msg_json)
                 except Exception as err:  # noqa: BLE001
@@ -84,25 +90,13 @@ class SnoopWebSocketServer:
         try:
             while True:
                 await ws.recv()
-        except (websockets.exceptions.ConnectionClosed, websockets.exceptions.ConnectionClosedOK):
+        except websockets.exceptions.ConnectionClosed:
+            # Covers ConnectionClosedOK and ConnectionClosedError — both are subclasses.
             self._logger.info("Snoop connection closed")
         finally:
-            # Ensure polite close on server-side when connection handling ends.
-            try:
-                if getattr(ws, "open", False):
-                    try:
-                        await ws.close(code=1000, reason="server closing")
-                    except TypeError:
-                        await ws.close()
-
-                    wait_coro = getattr(ws, "wait_closed", None)
-                    if callable(wait_coro):
-                        with contextlib.suppress(Exception):
-                            await asyncio.wait_for(wait_coro(), timeout=1.0)
-            except Exception:
-                pass
-            finally:
-                self._snoop_sockets.discard(ws)
+            # Remove from set first, then close — prevents double-close race with stop().
+            self._snoop_sockets.discard(ws)
+            await _close_ws(ws)
 
 
 class OCPPRelay:
@@ -124,6 +118,17 @@ class OCPPRelay:
         self._csms_pass = csms_pass
         self._snoop_queue = snoop_queue
 
+    def _put_snoop(self, msg: MessageData) -> None:
+        """Put a message on the snoop queue, logging if the queue is full."""
+        if self._snoop_queue is None:
+            return
+        try:
+            self._snoop_queue.put_nowait(msg)
+        except asyncio.QueueFull:
+            self._logger.warning(
+                "Snoop queue is full; dropping %s event for CP %s", msg.event, msg.cp_id
+            )
+
     async def start(self, host: str, port: int, ssl_context=None):
         """Start accepting charge point websocket connections."""
         server = await websockets.serve(self._on_connect, host, port, ssl=ssl_context)
@@ -143,7 +148,17 @@ class OCPPRelay:
             await cp_ws.close()
             return
 
-        self._logger.info("Charge point connected: %s (protocol=%s)", charge_point_id, ws_subprotocol)
+        self._logger.info(
+            "Charge point connected: %s (protocol=%s)", charge_point_id, ws_subprotocol
+        )
+        self._put_snoop(
+            MessageData(
+                event="Connection",
+                sender="CP",
+                protocol=ws_subprotocol,
+                cp_id=charge_point_id,
+            )
+        )
 
         extra_headers = []
         if all([self._csms_id, self._csms_pass]):
@@ -151,62 +166,67 @@ class OCPPRelay:
             extra_headers.append(basic_auth_header(self._csms_id, self._csms_pass))
 
         csms_uri = f"{self._csms_url}/{charge_point_id}"
-        async with websockets.connect(
-            csms_uri,
-            subprotocols=[ws_subprotocol],
-            additional_headers=extra_headers,
-        ) as csms_ws:
-            # Relay in both directions until either side closes.
-            tasks = [
-                asyncio.create_task(
-                    self._relay(
-                        cp_ws,
-                        csms_ws,
-                        source_name="CP",
-                        target_name="CSMS",
-                        cp_id=charge_point_id,
-                        protocol=ws_subprotocol,
-                    )
-                ),
-                asyncio.create_task(
-                    self._relay(
-                        csms_ws,
-                        cp_ws,
-                        source_name="CSMS",
-                        target_name="CP",
-                        cp_id=charge_point_id,
-                        protocol=ws_subprotocol,
-                    )
-                ),
-            ]
+        try:
+            async with websockets.connect(
+                csms_uri,
+                subprotocols=[ws_subprotocol],
+                additional_headers=extra_headers,
+            ) as csms_ws:
+                # Relay in both directions until either side closes.
+                tasks = [
+                    asyncio.create_task(
+                        self._relay(
+                            cp_ws,
+                            csms_ws,
+                            source_name="CP",
+                            target_name="CSMS",
+                            cp_id=charge_point_id,
+                            protocol=ws_subprotocol,
+                        )
+                    ),
+                    asyncio.create_task(
+                        self._relay(
+                            csms_ws,
+                            cp_ws,
+                            source_name="CSMS",
+                            target_name="CP",
+                            cp_id=charge_point_id,
+                            protocol=ws_subprotocol,
+                        )
+                    ),
+                ]
 
-            try:
-                await asyncio.gather(*tasks)
-            except (websockets.exceptions.ConnectionClosed, websockets.exceptions.ConnectionClosedOK):
-                # Normal termination path: one side closed, so both relay loops should end.
-                self._logger.info("Relay connection closed for charge point %s", charge_point_id)
-            finally:
-                # Ensure both loops terminate to avoid orphaned websocket reads.
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+                try:
+                    await asyncio.gather(*tasks)
+                finally:
+                    # Ensure both loops terminate to avoid orphaned websocket reads.
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
 
-                # Politely close both websockets if still open.
-                for sock in (cp_ws, csms_ws):
-                    try:
-                        if getattr(sock, "open", False):
-                            try:
-                                await sock.close(code=1000, reason="relay shutdown")
-                            except TypeError:
-                                await sock.close()
+                    # Politely close both websockets if still open.
+                    for sock in (cp_ws, csms_ws):
+                        await _close_ws(sock)
 
-                            wait_coro = getattr(sock, "wait_closed", None)
-                            if callable(wait_coro):
-                                with contextlib.suppress(Exception):
-                                    await asyncio.wait_for(wait_coro(), timeout=1.0)
-                    except Exception:
-                        pass
+            self._logger.info("Relay connection closed for charge point %s", charge_point_id)
+
+        except Exception as err:  # noqa: BLE001
+            self._logger.error(
+                "Unexpected error in relay for charge point %s: %s", charge_point_id, err
+            )
+        finally:
+            self._logger.info("Charge point disconnected: %s", charge_point_id)
+            self._put_snoop(
+                MessageData(
+                    event="Disconnection",
+                    sender="CP",
+                    protocol=ws_subprotocol,
+                    cp_id=charge_point_id,
+                )
+            )
+            # Ensure the CP socket is closed even if the CSMS connect itself failed.
+            await _close_ws(cp_ws)
 
     async def _relay(
         self,
@@ -219,19 +239,47 @@ class OCPPRelay:
     ) -> None:
         """Forward frames one direction and optionally mirror them to snoop."""
         while True:
-            message = await source_ws.recv()
-            json_message = json.loads(message)
-            await target_ws.send(message)
-            self._logger.info(
-                "Relayed message from %s to %s (%s)", source_name, target_name, json_message[1]
-            )
-            if self._snoop_queue is not None:
-                self._snoop_queue.put_nowait(
-                    MessageData(
-                        event="Message",
-                        sender=source_name,
-                        protocol=protocol,
-                        cp_id=cp_id,
-                        payload=json_message,
-                    )
+            try:
+                message = await source_ws.recv()
+            except websockets.exceptions.ConnectionClosed:
+                self._logger.info(
+                    "Connection closed on %s side for CP %s", source_name, cp_id
                 )
+                return
+
+            # Guard against malformed (non-list) OCPP frames before indexing.
+            try:
+                json_message = json.loads(message)
+            except json.JSONDecodeError as err:
+                self._logger.warning(
+                    "Non-JSON frame from %s for CP %s (dropping): %s", source_name, cp_id, err
+                )
+                continue
+
+            try:
+                await target_ws.send(message)
+            except websockets.exceptions.ConnectionClosed:
+                self._logger.info(
+                    "Connection closed on %s side while relaying for CP %s", target_name, cp_id
+                )
+                return
+
+            # Safe log: json_message may be a dict or other non-list for malformed frames.
+            if isinstance(json_message, list) and len(json_message) > 1:
+                msg_id = json_message[1]
+            else:
+                msg_id = "<non-list frame>"
+            self._logger.info(
+                "Relayed message from %s to %s (%s)", source_name, target_name, msg_id
+            )
+
+            # Use _put_snoop() to handle QueueFull gracefully.
+            self._put_snoop(
+                MessageData(
+                    event="Message",
+                    sender=source_name,
+                    protocol=protocol,
+                    cp_id=cp_id,
+                    payload=json_message,
+                )
+            )

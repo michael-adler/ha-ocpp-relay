@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import random
 from typing import Any
 
 import websockets
@@ -13,6 +14,10 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from ..const import CONF_SNOOP_SOCKET, DOMAIN, SIGNAL_NEW_SENSOR, SIGNAL_SENSOR_UPDATE
 from .models import OCPPSensorData
 from .parser import OCPPFilter
+
+# Reconnect base delay and jitter range (seconds).
+_RECONNECT_BASE = 15
+_RECONNECT_JITTER = 5
 
 
 class OCPPSnoopClient:
@@ -56,6 +61,8 @@ class OCPPSnoopClient:
         """Maintain a resilient connection to the relay snoop websocket.
 
         The loop reconnects with backoff on transient network/server failures.
+        Add random jitter to the retry delay so this loop does not
+        lockstep with the relay supervisor's own 15-second restart cycle.
         """
         self._logger.info("Connecting to relay snoop websocket at %s", self._snoop_socket)
         while True:
@@ -66,8 +73,11 @@ class OCPPSnoopClient:
             except asyncio.CancelledError:
                 raise
             except Exception as err:
-                self._logger.warning("Snoop websocket error: %s. Reconnecting in 15 seconds.", err)
-                await asyncio.sleep(15)
+                delay = _RECONNECT_BASE + random.uniform(0, _RECONNECT_JITTER)
+                self._logger.warning(
+                    "Snoop websocket error: %s. Reconnecting in %.1f seconds.", err, delay
+                )
+                await asyncio.sleep(delay)
 
     async def _handle_message(self, message: str) -> None:
         """Decode one snoop event and fan out resulting sensor updates."""

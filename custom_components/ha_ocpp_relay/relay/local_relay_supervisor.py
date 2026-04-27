@@ -16,6 +16,9 @@ from ..const import (
 )
 from .core import OCPPRelay, SnoopWebSocketServer
 
+# Configuration errors should not trigger an infinite restart loop.
+_CONFIG_ERRORS = (ValueError, KeyError, TypeError)
+
 
 class LocalRelaySupervisor:
     def __init__(self, hass, config: dict[str, Any]) -> None:
@@ -64,17 +67,37 @@ class LocalRelaySupervisor:
                 )
 
                 await asyncio.gather(relay_server.wait_closed(), snoop_server.wait_closed())
+
             except asyncio.CancelledError:
                 raise
+
+            except _CONFIG_ERRORS as err:
+                # Configuration errors are permanent — stop the loop instead of
+                # retrying indefinitely and spamming the log every 15 seconds.
+                self._logger.error(
+                    "Local relay configuration error (will not retry): %s", err
+                )
+                return
+
             except Exception as err:  # noqa: BLE001
                 self._logger.exception("Local relay crashed: %s. Restarting in 15 seconds.", err)
                 await asyncio.sleep(15)
+
             finally:
-                if relay_server is not None:
-                    relay_server.close()
-                    await relay_server.wait_closed()
-                if snoop_server is not None:
-                    snoop_server.close()
-                    await snoop_server.wait_closed()
+                # Stop the fanout task BEFORE closing the underlying server sockets
+                # so the forward loop cannot attempt sends after the server is gone.
                 if snoop_ws_server is not None:
                     await snoop_ws_server.stop()
+
+                # Only call close()+wait_closed() here; do NOT call wait_closed()
+                # again when gather() already returned (i.e. the server closed on its own).
+                # websockets Server.close() is idempotent, and wait_closed() after an already-
+                # closed server returns immediately, so this is safe in all paths.
+                if relay_server is not None:
+                    relay_server.close()
+                    with contextlib.suppress(Exception):
+                        await relay_server.wait_closed()
+                if snoop_server is not None:
+                    snoop_server.close()
+                    with contextlib.suppress(Exception):
+                        await snoop_server.wait_closed()
