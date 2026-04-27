@@ -6,6 +6,7 @@ import threading
 import subprocess
 import threading
 import socket
+import logging
 
 import pytest
 # Skip the whole module during collection if paho-mqtt isn't installed in the environment
@@ -202,10 +203,28 @@ def test_playback_and_snoop2mqtt_collects_messages(tmp_path):
 
     client.loop_stop()
 
-    # Dump all collected messages to stdout for CI inspection
-    print("--- MQTT messages captured ---")
+    # Dump all collected messages via logging (visible with pytest log_cli)
+    logger = logging.getLogger(__name__)
+    logger.info("--- MQTT messages captured ---")
     for m in messages:
-        print(json.dumps(m))
+        logger.info(json.dumps(m))
+
+    # Also log topics and parsed values for easier human inspection
+    logger.info("--- MQTT topics and values ---")
+    for m in messages:
+        topic = m.get("topic")
+        payload = m.get("payload")
+        value = None
+        if payload:
+            try:
+                parsed = json.loads(payload)
+                if isinstance(parsed, dict) and "value" in parsed:
+                    value = parsed["value"]
+                else:
+                    value = parsed
+            except Exception:
+                value = payload
+        logger.info(f"{topic} -> {value}")
 
     # Validate specific expected topics and payloads were published
     expected = [
@@ -217,7 +236,25 @@ def test_playback_and_snoop2mqtt_collects_messages(tmp_path):
         {"topic": "ocpp/AL0123456789ABCDEF/1/Outlet/Power-Active-Import/state", "payload": '{"value": 11.378}'},
     ]
 
+    matched = []
+    missing = []
     for exp in expected:
         found = any(m.get("topic") == exp["topic"] and m.get("payload") == exp["payload"] for m in messages)
-        if not found:
-            pytest.fail(f"Expected MQTT message not found: {exp}\nCaptured messages:\n{json.dumps(messages, indent=2)}")
+        if found:
+            matched.append(exp)
+        else:
+            missing.append(exp)
+
+    # Log summary of results (visible during test run due to log_cli)
+    total = len(expected)
+    matched_count = len(matched)
+    missing_count = len(missing)
+    logger.info(f"--- Expected topics tested: {total}; matched: {matched_count}; missing: {missing_count} ---")
+
+    if missing_count > 0:
+        logger.info("--- Missing expected messages ---")
+        for m in missing:
+            logger.info(json.dumps(m))
+        pytest.fail(f"{missing_count} expected MQTT messages not found out of {total}. See above for details.")
+    else:
+        logger.info("All expected MQTT messages found.")
