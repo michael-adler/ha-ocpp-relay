@@ -159,10 +159,18 @@ class OCPPRelay:
         # The CP identifier is encoded in the websocket URL path.
         charge_point_id = cp_ws.request.path.strip("/")
 
-        try:
-            # OCPP requires an agreed subprotocol (for example ocpp1.6 or ocpp2.0.1).
-            ws_subprotocol = cp_ws.request.headers["Sec-WebSocket-Protocol"]
-        except KeyError:
+        # Prefer the negotiated subprotocol attribute set by the websockets server.
+        # Fallback to the Sec-WebSocket-Protocol header if the negotiated value
+        # is not available (some transports/providers put a comma-separated
+        # list in the header).
+        ws_subprotocol = getattr(cp_ws, "subprotocol", None)
+        if not ws_subprotocol:
+            header = cp_ws.request.headers.get("Sec-WebSocket-Protocol")
+            if header:
+                # Use the first token when multiple subprotocols are listed.
+                ws_subprotocol = header.split(",")[0].strip()
+
+        if not ws_subprotocol:
             self._logger.error("Client did not specify OCPP sub-protocol. Closing connection.")
             await cp_ws.close()
             return
