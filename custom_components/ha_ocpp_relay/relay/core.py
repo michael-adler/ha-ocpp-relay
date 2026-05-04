@@ -297,7 +297,7 @@ class OCPPRelay:
                 msg_id = json_message[1]
             else:
                 msg_id = "<non-list frame>"
-            self._logger.info(
+            self._logger.debug(
                 "Relayed message from %s to %s (%s)", source_name, target_name, msg_id
             )
 

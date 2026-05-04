@@ -8,6 +8,8 @@ import logging
 
 import websockets
 
+from relay_server.cli.common import configure_logging
+
 
 def parse_args():
     """Parse command line arguments."""
@@ -35,6 +37,10 @@ Record a stream of OCPP snoop messages to a file.
         default="output.json",
         help="""Output file (default: %(default)s).""",
     )
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("-v", "--verbose", action="store_true", help="Verbose output.")
+    group.add_argument("-q", "--quiet", action="store_true", help="Reduce output.")
 
     return parser.parse_args()
 
@@ -67,9 +73,11 @@ def main():
     """Parse CLI settings and run the snoop recorder utility."""
     args = parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - [%(levelname)-4.4s] - [%(threadName)-7.7s] - [%(name)-20.20s] - %(message)s",
+    configure_logging(
+        app_name="ocpp-snoop-recorder",
+        verbose=args.verbose,
+        quiet=args.quiet,
+        use_syslog=False,
     )
 
     try:

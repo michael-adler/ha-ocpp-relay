@@ -3,6 +3,7 @@ import sys
 import time
 import json
 import asyncio
+import logging
 
 import pytest
 # Skip this test module unless the Home Assistant pytest plugin is
@@ -28,6 +29,8 @@ from custom_components.ha_ocpp_relay.const import (
 import importlib
 
 
+logging.basicConfig(level=logging.DEBUG, force=True)
+
 
 
 
@@ -41,6 +44,7 @@ async def test_ha_integration_creates_sensors_from_snoop_playback(hass, tmp_path
     """
 
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    logging.getLogger().setLevel(logging.DEBUG)
 
     # Read the recorded log file and monkeypatch websockets.connect so the
     # integration's snoop client consumes these messages without opening sockets.

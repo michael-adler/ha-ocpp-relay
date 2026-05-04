@@ -12,6 +12,9 @@ import pytest
 mqtt = pytest.importorskip("paho.mqtt.client")
 from paho.mqtt.client import CallbackAPIVersion
 
+
+logging.basicConfig(level=logging.DEBUG, force=True)
+
 def wait_until(predicate, timeout=10.0, interval=0.05, desc="condition"):
     end = time.time() + timeout
     while time.time() < end:
@@ -44,6 +47,7 @@ def test_playback_and_snoop2mqtt_collects_messages(tmp_path):
 
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     python = sys.executable
+    logging.getLogger().setLevel(logging.DEBUG)
 
     # MQTT subscriber to collect published messages
     messages = []

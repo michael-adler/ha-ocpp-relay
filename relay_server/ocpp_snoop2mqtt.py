@@ -88,7 +88,7 @@ async def process_messages(publisher: MQTTPublisher, snoop_socket: str, exit_on_
         filtered = ocpp_filter.filter(msg)
         if filtered:
             for message in filtered:
-                logger.info("Handle message: %s", message)
+                logger.debug("Handle message: %s", message)
                 await publisher.publish_data(message)
 
     logger.info("Message source closed. Stopping publisher...")

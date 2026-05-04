@@ -71,7 +71,7 @@ class MQTTPublisher:
         while True:
             try:
                 data: SensorData = await asyncio.wait_for(self._queue.get(), timeout=5.0)
-                self._logger.info("Publishing %s", data)
+                self._logger.debug("Publishing %s", data)
 
                 if not self._connected:
                     await self._connected_event.wait()
@@ -235,7 +235,7 @@ class MQTTPublisher:
             if data.state_class:
                 component["state_class"] = data.state_class
 
-        self._logger.info("Publishing discovery message for %s to topic %s", data, topic)
+        self._logger.debug("Publishing discovery message for %s to topic %s", data, topic)
         info = self._mqtt.publish(topic, json.dumps(discover), qos=1, retain=False)
         if info.rc != mqtt_client.MQTT_ERR_SUCCESS:
             self._logger.error("Error publishing to topic %s: %s", topic, info.rc)
@@ -247,7 +247,7 @@ class MQTTPublisher:
         topic = self._mqtt_state_topic(data)
         payload = {"value": data.value}
 
-        self._logger.info("Publishing data %s to topic %s", data, topic)
+        self._logger.debug("Publishing data %s to topic %s", data, topic)
         info = self._mqtt.publish(topic, json.dumps(payload), qos=1, retain=False)
         if info.rc != mqtt_client.MQTT_ERR_SUCCESS:
             self._logger.error("Error publishing to topic %s: %s", topic, info.rc)
