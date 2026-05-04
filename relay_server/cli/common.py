@@ -12,6 +12,41 @@ from typing import Any
 import yaml
 
 
+class WebSocketKeepaliveFilter(logging.Filter):
+    """Drop noisy websocket ping/pong debug records while keeping other debug logs."""
+
+    _suppressed_messages = (
+        "% sent keepalive ping",
+        "% received keepalive pong",
+        "- timed out waiting for keepalive pong",
+    )
+    _suppressed_frame_prefixes = (
+        "> PING",
+        "< PING",
+        "> PONG",
+        "< PONG",
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Return False for websocket keepalive and ping/pong frame debug logs."""
+        if not record.name.startswith("websockets"):
+            return True
+
+        message = record.getMessage()
+        if message in self._suppressed_messages:
+            return False
+        return not message.startswith(self._suppressed_frame_prefixes)
+
+
+def install_websocket_keepalive_filter() -> None:
+    """Attach the websocket keepalive filter to all configured root handlers."""
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers:
+        if any(isinstance(existing_filter, WebSocketKeepaliveFilter) for existing_filter in handler.filters):
+            continue
+        handler.addFilter(WebSocketKeepaliveFilter())
+
+
 def apply_yaml_section_defaults(
     parser: argparse.ArgumentParser,
     section: str,
@@ -74,6 +109,7 @@ def configure_logging(*, app_name: str, verbose: bool, quiet: bool, use_syslog: 
 
     if not use_syslog:
         logging.basicConfig(level=level, format=default_format)
+        install_websocket_keepalive_filter()
         return
 
     address: str | tuple[str, int]
@@ -86,5 +122,7 @@ def configure_logging(*, app_name: str, verbose: bool, quiet: bool, use_syslog: 
             handlers=[handler],
             format=f"{app_name}: %(levelname)s - %(threadName)s - %(name)s - %(message)s",
         )
+        install_websocket_keepalive_filter()
     except Exception:  # noqa: BLE001
         logging.basicConfig(level=level, format=default_format)
+        install_websocket_keepalive_filter()

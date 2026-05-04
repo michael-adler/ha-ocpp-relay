@@ -9,6 +9,7 @@ from dataclasses import asdict
 import json
 import logging
 import ssl
+from urllib.parse import urlsplit, urlunsplit
 
 import websockets
 import websockets.exceptions
@@ -25,6 +26,14 @@ def basic_auth_header(username: str, password: str) -> tuple[str, str]:
     user_pass = f"{username}:{password}"
     basic_credentials = base64.b64encode(user_pass.encode()).decode()
     return ("Authorization", f"Basic {basic_credentials}")
+
+
+def join_websocket_url(base_url: str, path_segment: str) -> str:
+    """Append a websocket path segment without introducing duplicate slashes."""
+    split_url = urlsplit(base_url)
+    base_path = split_url.path.rstrip("/")
+    joined_path = f"{base_path}/{path_segment.lstrip('/')}"
+    return urlunsplit(split_url._replace(path=joined_path))
 
 
 async def _close_ws(ws, *, timeout: float = 1.0) -> None:
@@ -192,13 +201,23 @@ class OCPPRelay:
             # Forward optional upstream BasicAuth credentials only to the CSMS side.
             extra_headers.append(basic_auth_header(self._csms_id, self._csms_pass))
 
-        csms_uri = f"{self._csms_url}/{charge_point_id}"
+        csms_uri = join_websocket_url(self._csms_url, charge_point_id)
+        connect_kwargs = {
+            "subprotocols": [ws_subprotocol],
+            "additional_headers": extra_headers,
+        }
+        if self._csms_ssl_context is not None:
+            connect_kwargs["ssl"] = self._csms_ssl_context
+
+        self._logger.info(
+            "Connecting charge point %s to upstream CSMS at %s",
+            charge_point_id,
+            csms_uri,
+        )
         try:
             async with websockets.connect(
                 csms_uri,
-                subprotocols=[ws_subprotocol],
-                additional_headers=extra_headers,
-                ssl=self._csms_ssl_context,
+                **connect_kwargs,
             ) as csms_ws:
                 # Relay in both directions until either side closes.
                 tasks = [
