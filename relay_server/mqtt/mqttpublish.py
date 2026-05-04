@@ -23,6 +23,7 @@ class MQTTPublisher:
         broker_username: str | None = None,
         broker_password: str | None = None,
         topic_prefix: str = "homeassistant",
+        origin_name: str = "ocpp2mqtt",
     ):
         self._logger = logging.getLogger(__name__)
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=_MQTT_QUEUE_MAXSIZE)
@@ -33,6 +34,7 @@ class MQTTPublisher:
         self._broker_username = broker_username
         self._broker_password = broker_password
         self._topic_prefix = topic_prefix
+        self._origin_name = origin_name
         self._exit_task = False
         self._connected = False
 
@@ -171,6 +173,17 @@ class MQTTPublisher:
         """Build state topic for a sensor payload."""
         return f"ocpp/{data.cp_id}/{data.topic}/state"
 
+    @staticmethod
+    def _strip_ocpp_prefix(name: str) -> str:
+        """Strip the leading 'OCPP ' prefix from a sensor name.
+
+        The parser adds this prefix so that HA native sensors are clearly
+        labelled within the Home Assistant device registry.  For MQTT
+        discovery the device grouping already provides that context, so the
+        prefix is redundant.
+        """
+        return name.removeprefix("OCPP ")
+
     def _mqtt_discover(self, data: SensorData):
         """Publish Home Assistant discovery message for one sensor."""
         state_topic = self._mqtt_state_topic(data)
@@ -186,7 +199,7 @@ class MQTTPublisher:
                 "serial_number": data.cp_id,
             },
             "origin": {
-                "name": "ha-ocpp-relay",
+                "name": self._origin_name,
                 "sw_version": "0.1",
                 "support_url": "https://github.com/michael-adler/ha-ocpp-relay",
             },
@@ -194,7 +207,7 @@ class MQTTPublisher:
                 f"{data.unique_id}_value": {
                     "platform": "sensor",
                     "unique_id": f"{data.unique_id}_value",
-                    "name": data.name,
+                    "name": self._strip_ocpp_prefix(data.name),
                     "state_topic": state_topic,
                     "qos": 1,
                     "expire_after": 0,
