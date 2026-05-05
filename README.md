@@ -13,7 +13,7 @@ The provided HACS integration monitors OCPP messages and maps them to Home Assis
 1. In Home Assistant, open HACS → Integrations.
 2. Click the three dots (⋮) in the top right and select **Custom repositories**.
 3. Add this repository URL: `https://github.com/michael-adler/ha-ocpp-relay` as type **Integration**.
-4. After adding, search for **HA OCPP Relay** in HACS and install it.
+4. After adding, search for **OCPP Relay** in HACS and download it.
 5. Restart Home Assistant.
 
 **Quick install (after adding as custom repo):**
