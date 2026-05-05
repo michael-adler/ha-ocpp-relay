@@ -11,6 +11,8 @@ from .const import (
     normalize_relay_config,
 )
 
+_SKIP_NEXT_UPDATE_RELOAD = "skip_next_update_reload"
+
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
@@ -41,6 +43,17 @@ def _config_has_changed(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if runtime is None:
         return True
     return runtime.get("config") != _merged_config(entry)
+
+
+def _consume_skip_next_update_reload(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Return whether the next update-listener reload should be skipped."""
+    runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if runtime is None:
+        return False
+    if not runtime.get(_SKIP_NEXT_UPDATE_RELOAD):
+        return False
+    runtime.pop(_SKIP_NEXT_UPDATE_RELOAD, None)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -117,6 +130,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_handle_entry_update(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload the integration only when effective runtime config changes."""
+    if _consume_skip_next_update_reload(hass, entry):
+        return
     if not _config_has_changed(hass, entry):
         return
     await async_reload_entry(hass, entry)

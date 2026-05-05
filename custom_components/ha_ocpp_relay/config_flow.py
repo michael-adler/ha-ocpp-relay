@@ -26,6 +26,8 @@ from .const import (
     normalize_relay_config,
 )
 
+_SKIP_NEXT_UPDATE_RELOAD = "skip_next_update_reload"
+
 
 def _config_schema(defaults: dict) -> vol.Schema:
     """Build the initial schema used when opening the flow."""
@@ -217,6 +219,9 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             reconfigure_entry = self._get_reconfigure_entry()
             # Update both data and options so merged runtime config cannot be
             # masked by stale options from previous edits.
+            runtime = self.hass.data.get(DOMAIN, {}).get(reconfigure_entry.entry_id)
+            if runtime is not None:
+                runtime[_SKIP_NEXT_UPDATE_RELOAD] = True
             return self.async_update_reload_and_abort(
                 reconfigure_entry,
                 title=reconfigure_entry.title,
