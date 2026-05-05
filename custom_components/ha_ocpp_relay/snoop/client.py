@@ -15,7 +15,11 @@ from ..const import CONF_SNOOP_SOCKET, DOMAIN, SIGNAL_NEW_SENSOR, SIGNAL_SENSOR_
 from .models import OCPPSensorData
 from .parser import OCPPFilter
 
-# Reconnect base delay and jitter range (seconds).
+# Reconnect delay policy (seconds).
+# Use a fast retry loop before the first successful connection to avoid
+# missing startup telemetry while local relay/snoop sockets are still binding.
+_INITIAL_RECONNECT_BASE = 1
+_INITIAL_RECONNECT_JITTER = 0.5
 _RECONNECT_BASE = 15
 _RECONNECT_JITTER = 5
 
@@ -65,15 +69,20 @@ class OCPPSnoopClient:
         lockstep with the relay supervisor's own 15-second restart cycle.
         """
         self._logger.info("Connecting to relay snoop websocket at %s", self._snoop_socket)
+        has_connected_once = False
         while True:
             try:
                 async with websockets.connect(self._snoop_socket) as websocket:
+                    has_connected_once = True
                     async for message in websocket:
                         await self._handle_message(message)
             except asyncio.CancelledError:
                 raise
             except Exception as err:
-                delay = _RECONNECT_BASE + random.uniform(0, _RECONNECT_JITTER)
+                if has_connected_once:
+                    delay = _RECONNECT_BASE + random.uniform(0, _RECONNECT_JITTER)
+                else:
+                    delay = _INITIAL_RECONNECT_BASE + random.uniform(0, _INITIAL_RECONNECT_JITTER)
                 self._logger.warning(
                     "Snoop websocket error: %s. Reconnecting in %.1f seconds.", err, delay
                 )

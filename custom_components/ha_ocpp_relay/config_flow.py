@@ -156,6 +156,78 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=_mode_schema(self._is_local),
         )
 
+    async def async_step_reconfigure(self, user_input=None) -> FlowResult:
+        """Handle Home Assistant reconfigure action for an existing entry."""
+        reconfigure_entry = self._get_reconfigure_entry()
+        merged = dict(reconfigure_entry.data)
+        merged.update(reconfigure_entry.options)
+        self._external_config = reconfigure_entry.options.get("external_config", {})
+        self._defaults = _defaults_from_mapping(merged)
+        self._is_local = self._defaults[CONF_RELAY_IS_LOCAL]
+
+        if user_input is not None:
+            new_is_local = user_input[CONF_RELAY_IS_LOCAL]
+            if new_is_local and not self._is_local:
+                self._external_config = {
+                    CONF_RELAY_SNOOP_HOST: self._defaults.get(CONF_RELAY_SNOOP_HOST),
+                    CONF_RELAY_SNOOP_PORT: self._defaults.get(CONF_RELAY_SNOOP_PORT),
+                    CONF_SNOOP_SOCKET: self._defaults.get(CONF_SNOOP_SOCKET),
+                }
+            if not new_is_local and self._is_local and self._external_config:
+                self._defaults.update(self._external_config)
+            self._is_local = new_is_local
+            self._defaults[CONF_RELAY_IS_LOCAL] = self._is_local
+            if self._is_local:
+                self._defaults[CONF_RELAY_SNOOP_HOST] = DEFAULT_RELAY_SNOOP_HOST
+            return await self.async_step_reconfigure_details()
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=_mode_schema(self._is_local),
+        )
+
+    async def async_step_reconfigure_details(self, user_input=None) -> FlowResult:
+        """Validate and persist reconfigure changes for an existing entry."""
+        if user_input is not None:
+            if CONF_RELAY_IS_LOCAL in user_input and user_input[CONF_RELAY_IS_LOCAL] != self._is_local:
+                new_is_local = user_input[CONF_RELAY_IS_LOCAL]
+                if new_is_local and not self._is_local:
+                    self._external_config = {
+                        CONF_RELAY_SNOOP_HOST: user_input.get(CONF_RELAY_SNOOP_HOST, self._defaults.get(CONF_RELAY_SNOOP_HOST)),
+                        CONF_RELAY_SNOOP_PORT: user_input.get(CONF_RELAY_SNOOP_PORT, self._defaults.get(CONF_RELAY_SNOOP_PORT)),
+                        CONF_SNOOP_SOCKET: user_input.get(CONF_SNOOP_SOCKET, self._defaults.get(CONF_SNOOP_SOCKET)),
+                    }
+                if not new_is_local and self._is_local and self._external_config:
+                    self._defaults.update(self._external_config)
+                self._is_local = new_is_local
+                self._defaults[CONF_RELAY_IS_LOCAL] = self._is_local
+                if self._is_local:
+                    self._defaults[CONF_RELAY_SNOOP_HOST] = DEFAULT_RELAY_SNOOP_HOST
+                return self.async_show_form(
+                    **_detail_form("reconfigure_details", self._defaults, self._is_local)
+                )
+
+            config, errors = self._validate_detail_input(user_input)
+            if errors:
+                self._defaults = _defaults_from_mapping(config)
+                return self.async_show_form(
+                    **_detail_form("reconfigure_details", self._defaults, self._is_local, errors)
+                )
+
+            reconfigure_entry = self._get_reconfigure_entry()
+            # Update both data and options so merged runtime config cannot be
+            # masked by stale options from previous edits.
+            return self.async_update_reload_and_abort(
+                reconfigure_entry,
+                title=reconfigure_entry.title,
+                data_updates=config,
+                options_updates=config,
+            )
+
+        return self.async_show_form(
+            **_detail_form("reconfigure_details", self._defaults, self._is_local)
+        )
+
     async def async_step_user_details(self, user_input=None) -> FlowResult:
         """Validate and persist initial integration settings.
 

@@ -73,16 +73,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await local_relay.async_start()
         await client.async_start()
 
-    if hass.is_running:
-        # Integration loaded after boot (e.g. added via UI) — start immediately.
+    if local_relay is None:
+        # External mode: start snoop client immediately to minimize missed
+        # startup messages from already-running upstream snoop servers.
+        await client.async_start()
+    elif hass.is_running:
+        # Local mode after boot (e.g. added via UI): start relay and client now.
         await _start_tasks()
     else:
         from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
-        # During bootstrap — defer until HA has fully started so these
-        # long-running tasks don't trigger the bootstrap timeout warning.
-        # Register the canceller so that if the entry is removed before HA
-        # finishes starting, the listener is cancelled and no orphaned relay
-        # binds the ports.
+
+        # Local mode during bootstrap: defer start until HA is fully running to
+        # avoid startup hangs/timeouts while binding local relay services.
         cancel_listener = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _start_tasks)
         entry.async_on_unload(cancel_listener)
 
