@@ -1,0 +1,69 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "OCPP Relay — Deployment Mode",
+        "data": {
+          "relay_is_local": "Use local relay"
+        },
+        "data_description": {
+          "relay_is_local": "When enabled, Home Assistant runs and supervises the OCPP relay process automatically in the background. Most users should leave this checked. Only uncheck it if you are running the relay on a separate host."
+        }
+      },
+      "user_details": {
+        "title": "OCPP Relay — Connection Settings",
+        "data": {
+          "cpms_url": "CPMS URL",
+          "relay_ocpp_host": "Relay OCPP host",
+          "relay_ocpp_port": "Relay OCPP port",
+          "relay_snoop_host": "Relay snoop host",
+          "relay_snoop_port": "Relay snoop port",
+          "snoop_socket": "Snoop socket URL"
+        },
+        "data_description": {
+          "cpms_url": "Remote Charge Point Management System URL used by the relay (e.g. wss://gateway.example.com/ws/webSocket). Charger serial numbers are appended automatically. Do not add a serial number here.",
+          "relay_ocpp_host": "Address the relay listens on for incoming charge point connections.",
+          "relay_ocpp_port": "Port the relay listens on for incoming charge point connections.",
+          "relay_snoop_host": "Address the relay listens on for snoop clients.",
+          "relay_snoop_port": "Port the relay listens on for snoop clients.",
+          "snoop_socket": "WebSocket URL that Home Assistant uses to connect to the snoop service. In local mode this is set automatically."
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "This relay snoop endpoint is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "OCPP Relay — Deployment Mode",
+        "data": {
+          "relay_is_local": "Use local relay"
+        },
+        "data_description": {
+          "relay_is_local": "When enabled, Home Assistant runs and supervises the OCPP relay process automatically in the background. Most users should leave this checked. Only uncheck it if you are running the relay on a separate host."
+        }
+      },
+      "details": {
+        "title": "OCPP Relay — Connection Settings",
+        "data": {
+          "cpms_url": "CPMS URL",
+          "relay_ocpp_host": "Relay OCPP host",
+          "relay_ocpp_port": "Relay OCPP port",
+          "relay_snoop_host": "Relay snoop host",
+          "relay_snoop_port": "Relay snoop port",
+          "snoop_socket": "Snoop socket URL"
+        },
+        "data_description": {
+          "cpms_url": "Remote Charge Point Management System URL used by the relay (e.g. wss://gateway.example.com/ws/webSocket). Charger serial numbers are appended automatically. Do not add a serial number here.",
+          "relay_ocpp_host": "Address the relay listens on for incoming charge point connections.",
+          "relay_ocpp_port": "Port the relay listens on for incoming charge point connections.",
+          "relay_snoop_host": "Address the relay listens on for snoop clients.",
+          "relay_snoop_port": "Port the relay listens on for snoop clients.",
+          "snoop_socket": "WebSocket URL that Home Assistant uses to connect to the snoop service. In local mode this is set automatically."
+        }
+      }
+    }
+  }
+}

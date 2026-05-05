@@ -1,6 +1,6 @@
 {
   "domain": "ha_ocpp_relay",
-  "name": "HA OCPP Relay",
+  "name": "OCPP Relay",
   "codeowners": [
     "@michael-adler"
   ],

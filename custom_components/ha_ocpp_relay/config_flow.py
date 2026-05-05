@@ -197,7 +197,7 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             await self.async_set_unique_id(config[CONF_SNOOP_SOCKET])
             self._abort_if_unique_id_configured()
-            return self.async_create_entry(title="HA OCPP Relay", data=config, options=options)
+            return self.async_create_entry(title="OCPP Relay", data=config, options=options)
 
         self._defaults = _defaults_from_mapping(self._defaults)
         return self._show_details_form()
