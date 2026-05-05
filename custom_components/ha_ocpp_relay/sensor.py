@@ -2,20 +2,37 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 import logging
+from pathlib import Path
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, SIGNAL_NEW_SENSOR, SIGNAL_SENSOR_UPDATE
+from .const import CONF_CPMS_URL, DOMAIN, SIGNAL_NEW_SENSOR, SIGNAL_SENSOR_UPDATE
 from .snoop.client import OCPPSnoopClient
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _load_manifest_version() -> str | None:
+    """Read integration version from manifest.json for device metadata."""
+    try:
+        manifest_path = Path(__file__).with_name("manifest.json")
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        version = data.get("version")
+        return version if isinstance(version, str) and version else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+_INTEGRATION_SW_VERSION = _load_manifest_version()
 
 
 async def async_setup_entry(
@@ -201,3 +218,20 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
         if sensor.manufacturer:
             attrs["manufacturer"] = sensor.manufacturer
         return attrs
+
+    @property
+    def device_info(self) -> DeviceInfo | None:
+        """Group sensors under one HA device per charge point ID."""
+        sensor = self._sensor
+        if sensor is None or not sensor.cp_id:
+            return None
+
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{sensor.cp_id}")},
+            name=f"Charge Point {sensor.cp_id}",
+            suggested_area=self._entry.title or None,
+            manufacturer=sensor.manufacturer,
+            model="OCPP Charge Point",
+            sw_version=_INTEGRATION_SW_VERSION,
+            configuration_url=self._entry.data.get(CONF_CPMS_URL) or None,
+        )
