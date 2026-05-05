@@ -252,7 +252,12 @@ class OCPPRelay:
                 ]
 
                 try:
-                    await asyncio.gather(*tasks)
+                    # Exit as soon as either relay direction closes so the other
+                    # is not left waiting on a dead connection.  Using
+                    # FIRST_COMPLETED means a CP disconnect during a reload
+                    # immediately cancels the CSMS-side reader instead of
+                    # blocking until the CSMS heartbeat timeout fires.
+                    await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                 finally:
                     # Ensure both loops terminate to avoid orphaned websocket reads.
                     for task in tasks:

@@ -81,7 +81,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "config": config,
     }
 
+    _tasks_started = False
+
     async def _start_tasks(_event=None) -> None:
+        nonlocal _tasks_started
+        _tasks_started = True
         if local_relay is not None:
             await local_relay.async_start()
         await client.async_start()
@@ -99,7 +103,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Local mode during bootstrap: defer start until HA is fully running to
         # avoid startup hangs/timeouts while binding local relay services.
         cancel_listener = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _start_tasks)
-        entry.async_on_unload(cancel_listener)
+
+        def _safe_cancel_listener() -> None:
+            # The one-time listener removes itself from the bus when the event
+            # fires.  Calling the cancel callable again after that triggers
+            # 'Unable to remove unknown job listener' in HA core, so skip it.
+            if not _tasks_started:
+                cancel_listener()
+
+        entry.async_on_unload(_safe_cancel_listener)
 
     entry.async_on_unload(entry.add_update_listener(async_handle_entry_update))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
