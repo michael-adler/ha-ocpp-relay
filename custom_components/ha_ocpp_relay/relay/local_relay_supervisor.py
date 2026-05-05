@@ -45,6 +45,7 @@ class LocalRelaySupervisor:
 
     async def _run(self) -> None:
         """Run relay+snoop servers and restart them after unexpected crashes."""
+        consecutive_eaddrinuse = 0
         while True:
             restart_delay = 0
             relay_server = None
@@ -67,6 +68,7 @@ class LocalRelaySupervisor:
                     self._config[CONF_RELAY_SNOOP_HOST],
                     self._config[CONF_RELAY_SNOOP_PORT],
                 )
+                consecutive_eaddrinuse = 0
 
                 await asyncio.gather(relay_server.wait_closed(), snoop_server.wait_closed())
 
@@ -82,28 +84,39 @@ class LocalRelaySupervisor:
                 return
 
             except OSError as err:
-                # EADDRINUSE is usually a static conflict (another process or
-                # integration instance already bound this host:port). Retrying
-                # every 15s only creates log noise and won't fix the conflict.
                 if err.errno == errno.EADDRINUSE:
+                    consecutive_eaddrinuse += 1
                     relay_host = self._config.get(CONF_RELAY_OCPP_HOST)
                     relay_port = self._config.get(CONF_RELAY_OCPP_PORT)
                     snoop_host = self._config.get(CONF_RELAY_SNOOP_HOST)
                     snoop_port = self._config.get(CONF_RELAY_SNOOP_PORT)
-                    self._logger.error(
-                        "Local relay port conflict (will not retry): %s. "
-                        "Check for another process using %s:%s or %s:%s, "
-                        "or change relay ports in integration options.",
+                    if consecutive_eaddrinuse > 3:
+                        self._logger.error(
+                            "Local relay port conflict (giving up after %d attempts): %s. "
+                            "Check for another process using %s:%s or %s:%s, "
+                            "or change relay ports in integration options.",
+                            consecutive_eaddrinuse,
+                            err,
+                            relay_host,
+                            relay_port,
+                            snoop_host,
+                            snoop_port,
+                        )
+                        return
+                    self._logger.warning(
+                        "Local relay port in use (attempt %d/3): %s. "
+                        "Retrying in 5 seconds (ports %s:%s, %s:%s).",
+                        consecutive_eaddrinuse,
                         err,
                         relay_host,
                         relay_port,
                         snoop_host,
                         snoop_port,
                     )
-                    return
-
-                self._logger.exception("Local relay crashed: %s. Restarting in 15 seconds.", err)
-                restart_delay = 15
+                    restart_delay = 5
+                else:
+                    self._logger.exception("Local relay crashed: %s. Restarting in 15 seconds.", err)
+                    restart_delay = 15
 
             except Exception as err:  # noqa: BLE001
                 self._logger.exception("Local relay crashed: %s. Restarting in 15 seconds.", err)
