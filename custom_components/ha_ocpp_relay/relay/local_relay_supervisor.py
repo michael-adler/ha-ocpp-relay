@@ -90,22 +90,18 @@ class LocalRelaySupervisor:
                     relay_port = self._config.get(CONF_RELAY_OCPP_PORT)
                     snoop_host = self._config.get(CONF_RELAY_SNOOP_HOST)
                     snoop_port = self._config.get(CONF_RELAY_SNOOP_PORT)
-                    if consecutive_eaddrinuse > 3:
-                        self._logger.error(
-                            "Local relay port conflict (giving up after %d attempts): %s. "
-                            "Check for another process using %s:%s or %s:%s, "
-                            "or change relay ports in integration options.",
-                            consecutive_eaddrinuse,
-                            err,
-                            relay_host,
-                            relay_port,
-                            snoop_host,
-                            snoop_port,
-                        )
-                        return
+                    # EADDRINUSE after a reload is typically a transient TIME_WAIT
+                    # condition: the OS has not yet released the ports from the
+                    # previous server sockets.  reuse_address=True on the serve()
+                    # calls should prevent this in practice, but keep retrying here
+                    # as a defensive backstop — do NOT give up permanently, because
+                    # that would leave the integration silently broken after any
+                    # reload while HA still considers the entry loaded.
                     self._logger.warning(
-                        "Local relay port in use (attempt %d/3): %s. "
-                        "Retrying in 5 seconds (ports %s:%s, %s:%s).",
+                        "Local relay port in use (attempt %d): %s. "
+                        "Retrying in 15 seconds (ports %s:%s, %s:%s). "
+                        "If this persists, check for another process using those ports "
+                        "or change relay ports in integration options.",
                         consecutive_eaddrinuse,
                         err,
                         relay_host,
@@ -113,7 +109,7 @@ class LocalRelaySupervisor:
                         snoop_host,
                         snoop_port,
                     )
-                    restart_delay = 5
+                    restart_delay = 15
                 else:
                     self._logger.exception("Local relay crashed: %s. Restarting in 15 seconds.", err)
                     restart_delay = 15

@@ -69,7 +69,7 @@ class SnoopWebSocketServer:
     async def start(self, host: str, port: int, ssl_context=None):
         """Start websocket serving and queue-to-client fanout task."""
         self._forward_task = asyncio.create_task(self._forward_messages())
-        server = await websockets.serve(self._on_connect, host, port, ssl=ssl_context)
+        server = await websockets.serve(self._on_connect, host, port, ssl=ssl_context, reuse_address=True)
         self._logger.info("Snoop server started on %s:%s", host, port)
         return server
 
@@ -167,7 +167,7 @@ class OCPPRelay:
             self._csms_ssl_context = await loop.run_in_executor(
                 None, ssl.create_default_context
             )
-        server = await websockets.serve(self._on_connect, host, port, ssl=ssl_context)
+        server = await websockets.serve(self._on_connect, host, port, ssl=ssl_context, reuse_address=True)
         self._logger.info("Relay server started on %s:%s", host, port)
         return server
 
