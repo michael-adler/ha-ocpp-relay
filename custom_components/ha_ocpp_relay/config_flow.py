@@ -281,15 +281,7 @@ class HaOcppRelayOptionsFlow(config_entries.OptionsFlow):
                 self._defaults = _defaults_from_mapping(config)
                 return self._show_details_form(errors=errors)
 
-            # Persist external config fields in options if in external mode
-            options = dict(self._config_entry.options)
-            if not config[CONF_RELAY_IS_LOCAL]:
-                options["external_config"] = {
-                    CONF_RELAY_SNOOP_HOST: config.get(CONF_RELAY_SNOOP_HOST),
-                    CONF_RELAY_SNOOP_PORT: config.get(CONF_RELAY_SNOOP_PORT),
-                    CONF_SNOOP_SOCKET: config.get(CONF_SNOOP_SOCKET),
-                }
-            return self.async_create_entry(title="", data=config, options=options)
+            return self.async_create_entry(data=config)
 
         self._defaults = _defaults_from_mapping(self._defaults)
         return self._show_details_form()
