@@ -159,6 +159,13 @@ class OCPPRelay:
 
     async def start(self, host: str, port: int, ssl_context=None):
         """Start accepting charge point websocket connections."""
+        # Pre-create the default SSL context off the event loop to avoid blocking
+        # the loop with load_default_certs on every wss:// upstream connection.
+        if self._csms_ssl_context is None and self._csms_url.startswith("wss://"):
+            loop = asyncio.get_running_loop()
+            self._csms_ssl_context = await loop.run_in_executor(
+                None, ssl.create_default_context
+            )
         server = await websockets.serve(self._on_connect, host, port, ssl=ssl_context)
         self._logger.info("Relay server started on %s:%s", host, port)
         return server
