@@ -30,6 +30,19 @@ def _merged_config(entry: ConfigEntry) -> dict[str, Any]:
     return normalize_relay_config(merged)
 
 
+def _config_has_changed(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Return whether a config entry update changed runtime settings.
+
+    Home Assistant invokes config entry update listeners for metadata changes
+    such as title renames as well as real config edits. Only the latter should
+    force a full integration reload.
+    """
+    runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if runtime is None:
+        return True
+    return runtime.get("config") != _merged_config(entry)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Initialize integration runtime for one config entry.
 
@@ -73,27 +86,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         cancel_listener = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _start_tasks)
         entry.async_on_unload(cancel_listener)
 
-    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+    entry.async_on_unload(entry.add_update_listener(async_handle_entry_update))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Tear down runtime objects and unload entity platforms for an entry."""
-    from .snoop.client import OCPPSnoopClient
-
-    runtime = hass.data[DOMAIN].pop(entry.entry_id)
-    client: OCPPSnoopClient = runtime["client"]
-    local_relay: LocalRelaySupervisor | None = runtime["relay"]
+    runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    client: OCPPSnoopClient | None = None
+    local_relay: LocalRelaySupervisor | None = None
+    if runtime is not None:
+        client = runtime.get("client")
+        local_relay = runtime.get("relay")
 
     if local_relay is not None:
         await local_relay.async_stop()
-    await client.async_stop()
+    if client is not None:
+        await client.async_stop()
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if not hass.data[DOMAIN]:
+    if runtime is not None:
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+    if DOMAIN in hass.data and not hass.data[DOMAIN]:
         hass.data.pop(DOMAIN)
     return unload_ok
+
+
+async def async_handle_entry_update(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload the integration only when effective runtime config changes."""
+    if not _config_has_changed(hass, entry):
+        return
+    await async_reload_entry(hass, entry)
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
