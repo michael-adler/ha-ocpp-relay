@@ -48,6 +48,10 @@ creates native sensor entities directly in Home Assistant. The stand-alone
 variant is similar, but connects to an MQTT broker instead of directly to
 the Home Assistant sensor API.
 
+Arrows describe the direction in which websockets are opened, toward the listener,
+and not the direction in which data flows. OCPP relay traffic is bidirectional and
+snoop data flows from the relay toward the snoop client.
+
 ```mermaid
 flowchart
   subgraph Snoop to Sensor Data
@@ -60,6 +64,12 @@ flowchart
 
   Snoop -- port 8501 --> Relay
 ```
+
+The relay supports multiple simultaneous EV charger connections and relays them to
+individual, private OCPP server connections. Traffic from all relayed connections
+is merged and forwarded to the snoop port. OCPP already tags each message with the
+unique ID of each charger. Generated Home Assistant sensor names and MQTT topics
+will include the ID.
 
 ## Deployment modes
 
