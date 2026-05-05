@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
-
 from .const import (
     CONF_RELAY_IS_LOCAL,
     DOMAIN,
@@ -63,9 +61,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await client.async_start()
 
     if hass.is_running:
+        from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
         # Integration loaded after boot (e.g. added via UI) — start immediately.
         await _start_tasks()
     else:
+        from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
         # During bootstrap — defer until HA has fully started so these
         # long-running tasks don't trigger the bootstrap timeout warning.
         hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _start_tasks)
