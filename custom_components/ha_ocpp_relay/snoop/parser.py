@@ -68,7 +68,7 @@ class OCPPFilter:
                     cp_id=cp_id,
                     topic="heartbeat",
                     unique_id=f"OCPP_{cp_id}_heartbeat",
-                    name=f"OCPP Heartbeat CP {cp_id}",
+                    name=f"Heartbeat CP {cp_id}",
                     device_class="timestamp",
                     value=timestamp,
                     manufacturer=self._manufacturer[cp_id],
@@ -142,9 +142,9 @@ class OCPPFilter:
                 pass
 
         if evse_id is None:
-            name = f"OCPP {value_type.replace('-', ' ')} {location} CP {cp_id}"
+            name = f"{value_type.replace('-', ' ')} {location} CP {cp_id}"
         else:
-            name = f"OCPP C{evse_id} {value_type.replace('-', ' ')} {location} CP {cp_id}"
+            name = f"C{evse_id} {value_type.replace('-', ' ')} {location} CP {cp_id}"
 
         return OCPPSensorData(
             cp_id=cp_id,
@@ -176,7 +176,7 @@ class OCPPFilter:
                 return None
             topic = f"{cable_id}/status"
             unique_id = f"OCPP_{cp_id}_{cable_id}_status"
-            name = f"OCPP Status CP {cp_id}" if cable_id is None else f"OCPP C{cable_id} Status CP {cp_id}"
+            name = f"Status CP {cp_id}" if cable_id is None else f"C{cable_id} Status CP {cp_id}"
             return [
                 OCPPSensorData(
                     cp_id=cp_id,
@@ -263,7 +263,7 @@ class OCPPFilter:
                 return None
             topic = f"{cable_id}/status"
             unique_id = f"OCPP_{cp_id}_{cable_id}_status"
-            name = f"OCPP Status CP {cp_id}" if cable_id is None else f"OCPP C{cable_id} Status CP {cp_id}"
+            name = f"Status CP {cp_id}" if cable_id is None else f"C{cable_id} Status CP {cp_id}"
             return [
                 OCPPSensorData(
                     cp_id=cp_id,

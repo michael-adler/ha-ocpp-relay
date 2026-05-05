@@ -185,35 +185,35 @@ async def test_ha_integration_creates_sensors_from_snoop_playback(hass, tmp_path
     # Assert the specific expected sensors (from CI playback) exist with correct values
     expected = {
         "OCPP_AL0123456789ABCDEF_heartbeat": {
-            "name": "OCPP Heartbeat CP AL0123456789ABCDEF",
+            "name": "Heartbeat CP AL0123456789ABCDEF",
             "value": "2026-04-18T20:09:23Z",
         },
         "OCPP_AL0123456789ABCDEF_1_status": {
-            "name": "OCPP C1 Status CP AL0123456789ABCDEF",
+            "name": "C1 Status CP AL0123456789ABCDEF",
             "value": "Charging",
         },
         "OCPP_AL0123456789ABCDEF_1_Outlet_Energy-Active-Import-Register": {
-            "name": "OCPP C1 Energy Active Import Register Outlet CP AL0123456789ABCDEF",
+            "name": "C1 Energy Active Import Register Outlet CP AL0123456789ABCDEF",
             "value": 440.6223,
         },
         "OCPP_AL0123456789ABCDEF_1_Outlet_Voltage": {
-            "name": "OCPP C1 Voltage Outlet CP AL0123456789ABCDEF",
+            "name": "C1 Voltage Outlet CP AL0123456789ABCDEF",
             "value": "245.360000",
         },
         "OCPP_AL0123456789ABCDEF_1_Outlet_Current-Export": {
-            "name": "OCPP C1 Current Export Outlet CP AL0123456789ABCDEF",
+            "name": "C1 Current Export Outlet CP AL0123456789ABCDEF",
             "value": "46.916000",
         },
         "OCPP_AL0123456789ABCDEF_1_Outlet_Current-Import": {
-            "name": "OCPP C1 Current Import Outlet CP AL0123456789ABCDEF",
+            "name": "C1 Current Import Outlet CP AL0123456789ABCDEF",
             "value": "46.916000",
         },
         "OCPP_AL0123456789ABCDEF_1_Outlet_Power-Offered": {
-            "name": "OCPP C1 Power Offered Outlet CP AL0123456789ABCDEF",
+            "name": "C1 Power Offered Outlet CP AL0123456789ABCDEF",
             "value": 11.378,
         },
         "OCPP_AL0123456789ABCDEF_1_Outlet_Power-Active-Import": {
-            "name": "OCPP C1 Power Active Import Outlet CP AL0123456789ABCDEF",
+            "name": "C1 Power Active Import Outlet CP AL0123456789ABCDEF",
             "value": 11.378,
         },
     }
