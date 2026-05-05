@@ -61,14 +61,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await client.async_start()
 
     if hass.is_running:
-        from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
         # Integration loaded after boot (e.g. added via UI) — start immediately.
         await _start_tasks()
     else:
         from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
         # During bootstrap — defer until HA has fully started so these
         # long-running tasks don't trigger the bootstrap timeout warning.
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _start_tasks)
+        # Register the canceller so that if the entry is removed before HA
+        # finishes starting, the listener is cancelled and no orphaned relay
+        # binds the ports.
+        cancel_listener = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _start_tasks)
+        entry.async_on_unload(cancel_listener)
 
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

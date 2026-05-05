@@ -110,22 +110,29 @@ class LocalRelaySupervisor:
                 restart_delay = 15
 
             finally:
-                # Stop the fanout task BEFORE closing the underlying server sockets
-                # so the forward loop cannot attempt sends after the server is gone.
-                if snoop_ws_server is not None:
-                    await snoop_ws_server.stop()
-
-                # Only call close()+wait_closed() here; do NOT call wait_closed()
-                # again when gather() already returned (i.e. the server closed on its own).
-                # websockets Server.close() is idempotent, and wait_closed() after an already-
-                # closed server returns immediately, so this is safe in all paths.
+                # Initiate server closes first so the underlying asyncio server
+                # sockets are released even if subsequent async cleanup steps are
+                # interrupted.  In websockets >= 14, Server.close() schedules an
+                # async _close() task; calling close() here ensures that task is
+                # queued before any await that might raise.
                 if relay_server is not None:
                     relay_server.close()
-                    with contextlib.suppress(Exception):
-                        await relay_server.wait_closed()
                 if snoop_server is not None:
                     snoop_server.close()
+
+                # Stop the snoop fanout task and drain connected snoop clients.
+                if snoop_ws_server is not None:
                     with contextlib.suppress(Exception):
+                        await snoop_ws_server.stop()
+
+                # Wait for servers to fully close (ports released).  Use
+                # suppress(BaseException) so a re-delivered CancelledError in the
+                # finally block does not skip the snoop server wait.
+                if relay_server is not None:
+                    with contextlib.suppress(BaseException):
+                        await relay_server.wait_closed()
+                if snoop_server is not None:
+                    with contextlib.suppress(BaseException):
                         await snoop_server.wait_closed()
 
             if restart_delay > 0:

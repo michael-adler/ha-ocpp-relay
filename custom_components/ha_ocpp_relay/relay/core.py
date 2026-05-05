@@ -39,8 +39,9 @@ def join_websocket_url(base_url: str, path_segment: str) -> str:
 async def _close_ws(ws, *, timeout: float = 1.0) -> None:
     """Close a websocket politely, suppressing all errors."""
     try:
-        if not getattr(ws, "open", False):
-            return
+        # Attempt close without pre-checking .open: the websockets asyncio API
+        # (v14+) dropped the .open attribute, and close() is idempotent so it
+        # is safe to call on an already-closing connection.
         try:
             await ws.close(code=1000, reason="server closing")
         except TypeError:
