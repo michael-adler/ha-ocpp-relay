@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 import logging
 from pathlib import Path
+from urllib.parse import urlparse
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -33,6 +34,21 @@ def _load_manifest_version() -> str | None:
 
 
 _INTEGRATION_SW_VERSION = _load_manifest_version()
+
+
+def _configuration_url(value: str | None) -> str | None:
+    """Return a HA-valid configuration URL or None.
+
+    Home Assistant device registry accepts http/https URLs here, but rejects
+    websocket endpoints such as ws:// and wss://.
+    """
+    if not value:
+        return None
+
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    return value
 
 
 async def async_setup_entry(
@@ -233,5 +249,5 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
             manufacturer=sensor.manufacturer,
             model="OCPP Charge Point",
             sw_version=_INTEGRATION_SW_VERSION,
-            configuration_url=self._entry.data.get(CONF_CPMS_URL) or None,
+            configuration_url=_configuration_url(self._entry.data.get(CONF_CPMS_URL)),
         )
