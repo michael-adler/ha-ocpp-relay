@@ -9,12 +9,18 @@ on:
         description: "Version to write to manifest.json (e.g. 0.2.1)"
         required: false
 
+concurrency:
+  group: sync-manifest-version-${{ github.event.repository.default_branch }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
 jobs:
   sync-version:
+    if: ${{ github.event_name != 'release' || github.event.release.prerelease == false }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout default branch
         uses: actions/checkout@v6
@@ -36,7 +42,7 @@ jobs:
           fi
 
           version="${version#v}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z]+)?$ ]]; then
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
             echo "Version '$version' does not look like semver" >&2
             exit 1
           fi
