@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+
 from .const import (
     CONF_RELAY_IS_LOCAL,
     DOMAIN,
@@ -48,7 +50,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     local_relay = None
     if config[CONF_RELAY_IS_LOCAL]:
         local_relay = LocalRelaySupervisor(hass, config)
-        await local_relay.async_start()
 
     hass.data[DOMAIN][entry.entry_id] = {
         "client": client,
@@ -56,7 +57,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "config": config,
     }
 
-    await client.async_start()
+    async def _start_tasks(_event=None) -> None:
+        if local_relay is not None:
+            await local_relay.async_start()
+        await client.async_start()
+
+    if hass.is_running:
+        # Integration loaded after boot (e.g. added via UI) — start immediately.
+        await _start_tasks()
+    else:
+        # During bootstrap — defer until HA has fully started so these
+        # long-running tasks don't trigger the bootstrap timeout warning.
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _start_tasks)
+
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True

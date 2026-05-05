@@ -31,7 +31,7 @@ class LocalRelaySupervisor:
     async def async_start(self) -> None:
         """Start the supervisor loop that owns relay and snoop servers."""
         if self._task is None:
-            self._task = self._hass.async_create_task(self._run())
+            self._task = self._hass.async_create_background_task(self._run(), name="ocpp_relay_supervisor")
 
     async def async_stop(self) -> None:
         """Stop the supervisor loop and wait for clean task shutdown."""

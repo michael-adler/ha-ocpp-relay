@@ -45,7 +45,7 @@ class OCPPSnoopClient:
 
     async def async_start(self) -> None:
         """Start the long-running websocket consumer task."""
-        self._task = self._hass.async_create_task(self._run(), name=f"{DOMAIN}_{self._entry_id}")
+        self._task = self._hass.async_create_background_task(self._run(), name=f"{DOMAIN}_{self._entry_id}")
 
     async def async_stop(self) -> None:
         """Cancel and await the websocket consumer task."""
