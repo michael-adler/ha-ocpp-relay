@@ -1,13 +1,11 @@
 name: Sync Manifest Version
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to write to manifest.json (e.g. 0.2.1)"
-        required: false
+        description: "Version to release (e.g. 0.2.1)"
+        required: true
 
 concurrency:
   group: sync-manifest-version-${{ github.event.repository.default_branch }}
@@ -18,7 +16,6 @@ permissions:
 
 jobs:
   sync-version:
-    if: ${{ github.event_name != 'release' || github.event.release.prerelease == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -32,21 +29,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -n "${{ github.event.inputs.version || '' }}" ]]; then
-            version="${{ github.event.inputs.version }}"
-          elif [[ -n "${{ github.event.release.tag_name || '' }}" ]]; then
-            version="${{ github.event.release.tag_name }}"
-          else
-            echo "Could not determine version" >&2
-            exit 1
-          fi
-
+          version="${{ github.event.inputs.version }}"
           version="${version#v}"
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
             echo "Version '$version' does not look like semver" >&2
             exit 1
           fi
-
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Update manifest version
@@ -69,11 +57,24 @@ jobs:
           set -euo pipefail
           if git diff --quiet -- custom_components/ha_ocpp_relay/manifest.json; then
             echo "No changes needed"
-            exit 0
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add custom_components/ha_ocpp_relay/manifest.json
+            git commit -m "chore(release): sync manifest version to ${{ steps.version.outputs.version }}"
+            git push
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add custom_components/ha_ocpp_relay/manifest.json
-          git commit -m "chore(release): sync manifest version to ${{ steps.version.outputs.version }}"
-          git push
+      - name: Tag the release commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          generate_release_notes: true
