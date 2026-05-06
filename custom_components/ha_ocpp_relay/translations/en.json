@@ -21,7 +21,7 @@
           "snoop_socket": "Snoop socket URL"
         },
         "data_description": {
-          "cpms_url": "Remote Charge Point Management System URL used by the relay (e.g. wss://gateway.example.com/ws/webSocket). Charger serial numbers are appended automatically. Do not add a serial number here.",
+          "cpms_url": "Remote Charge Point Management System URL used by the relay (e.g. wss://gateway.example.com/ws/webSocket). Copy the URL that is currently set in your EV charger. Charger serial numbers are appended automatically. Do not add a serial number here.",
           "relay_ocpp_host": "Address the relay listens on for incoming charge point connections.",
           "relay_ocpp_port": "Port the relay listens on for incoming charge point connections.",
           "relay_snoop_host": "Address the relay listens on for snoop clients.",
@@ -56,7 +56,7 @@
           "snoop_socket": "Snoop socket URL"
         },
         "data_description": {
-          "cpms_url": "Remote Charge Point Management System URL used by the relay (e.g. wss://gateway.example.com/ws/webSocket). Charger serial numbers are appended automatically. Do not add a serial number here.",
+          "cpms_url": "Remote Charge Point Management System URL used by the relay (e.g. wss://gateway.example.com/ws/webSocket). Copy the URL that is currently set in your EV charger. Charger serial numbers are appended automatically. Do not add a serial number here.",
           "relay_ocpp_host": "Address the relay listens on for incoming charge point connections.",
           "relay_ocpp_port": "Port the relay listens on for incoming charge point connections.",
           "relay_snoop_host": "Address the relay listens on for snoop clients.",

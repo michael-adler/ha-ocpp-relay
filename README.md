@@ -1,6 +1,10 @@
-# ha-ocpp-relay
+# EV Charger OCPP Relay for Home Assistant
 
-EV chargers are typically controlled by the [Open Charge Point Protocol](https://openchargealliance.org/protocols/open-charge-point-protocol/) \(OCPP\). The protocol includes metering. For some users, connecting to a particular remote OCPP server is essential for electrical billing discounts or access control. The code here monitors OCPP traffic to track energy use but acts only as a relay between an EV charger and the remote Charge Point Management System \(CPMS\). The relay exposes a second service where OCPP traffic can be monitored. No commands are accepted on this snoop port. Multiple clients may connect to the snoop service and each one receives the same OCPP JSON stream.
+[![](https://img.shields.io/badge/GitHub-View_Repository-blue?logo=github)](https://github.com/michael-adler/ha-ocpp-relay)
+
+EV chargers are typically controlled by the [Open Charge Point Protocol](https://openchargealliance.org/protocols/open-charge-point-protocol/) \(OCPP\). The protocol includes metering. For some users, connecting to a particular remote OCPP server is essential for electrical billing discounts or access control. The code here monitors OCPP traffic to track energy use but acts only as a relay between an EV charger and the remote Charge Point Management System \(CPMS\). The relay exposes a second socket where OCPP traffic can be monitored. Multiple clients may connect to the snoop service and each one receives the same read-only OCPP JSON stream.
+
+Use this project if you want to continue using your vendor's OCPP server while monitoring energy use. If your goal is to run your own local OCPP server and no longer connect to a vendor-provided server, use the [OCPP HACS extension](https://github.com/lbbrhzn/ocpp/) instead.
 
 The relay should work with any charge point. Data is forwarded blindly. It is derived from https://github.com/saisasidhar/ocpp-relay.
 
@@ -23,17 +27,23 @@ The provided HACS integration monitors OCPP messages and maps them to Home Assis
 1. Click the badge above to open the add integration dialog directly in your Home Assistant instance or, in Home Assistant, go to [Settings → Devices & Services → Add Integration](https://my.home-assistant.io/redirect/integration/?domain=ha_ocpp_relay) and search for **HA OCPP Relay**.
 2. Follow the prompts to configure the integration.
 3. Configure relay settings in the integration UI:
-	- `relay_is_local`: whether Home Assistant should run the relay process. Most users should leave this enabled.
+	- `Use local relay`: Whether Home Assistant should run the relay process. Most users should leave this enabled.
 	   When enabled, the relay is run automatically in the background.
-	- `cpms_url`: remote CPMS URL used by the relay process (required when local relay is enabled).
-	   Relays are typically web sockets, e.g. wss://gateway-eneprodus.autel.com/ws/webSocket.
-	   The serial numbers of EV chargers connecting through the relay will automatically be
-	   appended to the URL.
-	- `relay_ocpp_host` and `relay_ocpp_port`: relay bind address/port for charge points. When the relay is local the host is the Home Assistant server.
-	- `relay_snoop_host` and `relay_snoop_port`: relay snoop bind address/port. When the relay is local the host is the Home Assistant server.
-	- `snoop_socket`: URL used by the HA snoop client. When the relay is local this can not be edited and is set to the local snoop port.
+	- `Relay OCPP host` and `Relay OCPP port`: Relay bind address/port for charge points. When the relay is local the host is the Home Assistant server. This is the port to which your EV charger will connect.
+	- `Relay snoop host` and `Relay snoop port`: Relay snoop bind address/port. Typically set to the local interface when the relay is local to Home Assistant. The snoop port contains the data stream of OCPP traffic that will be mapped to sensors. For local relays, change the port only if there is a conflict with some other service.
+	- `CPMS URL`: Remote OCPP server to which the relay will connect, required when local relay is enabled.
+	   Relays are typically web sockets, e.g. wss://gateway.example.com/ws/webSocket.
+       Copy the URL that is currently set in your EV charger. Charger serial numbers are appended automatically.
+	   Do not add a serial number here.
+	- `Snoop socket`: URL used by the HA snoop client, configurable only when the relay is remote.
 
 All settings are editable later from integration options.
+
+## EV charger setup
+
+After you have set up the OCPP relay integration, update your EV charger so that it connects to Home Assistant. When you set up the OCPP integration, you found the URL of the CPMS set in your charger and copied it to Home Assistant. Now change the URL set in your charger to connect to the OCPP relay port, for example: `ws://homeassistant.local:8500/`. If homeassistant.local isn't resolved by the charger, replace it with a DNS name you have defined or the IP address of your Home Assistant server.
+
+Most chargers will append the ID of the charger automatically. Ensure that the URL that eventually reaches the OCPP relay ends with the ID.
 
 ## Repository layout
 
@@ -52,18 +62,7 @@ Arrows describe the direction in which websockets are opened, toward the listene
 and not the direction in which data flows. OCPP relay traffic is bidirectional and
 snoop data flows from the relay toward the snoop client.
 
-```mermaid
-flowchart
-  subgraph Snoop to Sensor Data
-    Snoop[HA local or ocpp-snoop2mqtt] --> Sensor[HA sensors or MQTT broker]
-  end
-  subgraph OCPP Connection
-    CP[EV Charger] -- port 8500 --> Relay[ocpp-relay-server]
-    Relay --> CPMS[Remote OCPP Server]
-  end
-
-  Snoop -- port 8501 --> Relay
-```
+<img src="docs/img/architecture.svg" style="width: 80%; height: auto;" alt="Diagram">
 
 The relay supports multiple simultaneous EV charger connections and relays them to
 individual, private OCPP server connections. Traffic from all relayed connections
@@ -98,18 +97,18 @@ ocpp-relay-server \
 - In the Home Assistant integration, set the snoop socket to the relay host, for example:
 	`ws://relay-host-or-ip:8501/`.
 - Ensure firewall/network rules allow Home Assistant to reach the relay snoop port.
-- The snoop websocket has no application-layer authentication; run it on a trusted network,
+- The snoop websocket has no application-layer authentication. Run it on a trusted network,
 	or protect it with host firewall, VPN, and/or reverse proxy controls.
 - Direct your EV charger to the websocket relay port on the relay host (default 8500).
 
 ## External MQTT helper scripts
 
-The package also includes two external CLI scripts:
+The package also includes two external CLI scripts. These share some of the library code but are not used when local relay is enabled.
 
 - `ocpp-snoop2mqtt`: subscribes to the relay snoop websocket and publishes mapped telemetry to MQTT.
 - `ocpp-snoop-recorder`: records the raw snoop websocket JSON stream to a file for later replay or analysis.
 
-`ocpp-snoop2mqtt` is not required when you use the `ha_ocpp_relay` Home Assistant integration, because that integration already consumes the snoop stream directly and creates entities natively. It is included for deployments where both the relay and MQTT client are run outside Home Assistant.
+`ocpp-snoop2mqtt` is included for deployments where both the relay and MQTT client are run outside Home Assistant.
 
 `ocpp-snoop-recorder` can be useful for debugging. It records a log of OCPP transactions that can be replayed later.
 
@@ -122,4 +121,4 @@ ocpp-snoop-recorder --snoop-socket ws://127.0.0.1:8501/ --output output.json
 
 ## Configuration example
 
-See `configs/configuration_example.yaml`. This configuration is used only by the command-line tools. It is not loaded by the HACS integration.
+See `configs/configuration_example.yaml`. This configuration is used only by the command-line tools. HACS users can ignore it.
