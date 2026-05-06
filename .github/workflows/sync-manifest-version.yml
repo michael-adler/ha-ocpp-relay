@@ -1,11 +1,15 @@
-name: Sync Manifest Version
+name: Create Release
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g. 0.2.1)"
+        description: "Version to release (e.g. 0.2.1 without v prefix)"
         required: true
+      prerelease:
+        description: "Mark as pre-release?"
+        type: boolean
+        default: false
 
 concurrency:
   group: sync-manifest-version-${{ github.event.repository.default_branch }}
@@ -78,3 +82,4 @@ jobs:
           tag_name: v${{ steps.version.outputs.version }}
           name: v${{ steps.version.outputs.version }}
           generate_release_notes: true
+          prerelease: ${{ inputs.prerelease }}
