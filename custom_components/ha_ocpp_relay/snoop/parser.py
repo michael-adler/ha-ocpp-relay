@@ -86,11 +86,20 @@ class OCPPFilter:
             return None
 
     def _get_manufacturer(self, ocpp: list) -> str | None:
-        """Extract vendor/manufacturer information from DataTransfer frames."""
+        """Extract vendor/manufacturer information from DataTransfer or BootNotification frames."""
         action = ocpp[2]
         payload = ocpp[3]
         if action == "DataTransfer" and isinstance(payload, dict):
             return payload.get("vendorId")
+        if action == "BootNotification" and isinstance(payload, dict):
+            # OCPP 1.6
+            vendor = payload.get("chargePointVendor")
+            if vendor:
+                return vendor
+            # OCPP 2.0.1
+            charging_station = payload.get("chargingStation")
+            if isinstance(charging_station, dict):
+                return charging_station.get("vendorName")
         return None
 
     def _new_meter_data(
@@ -167,6 +176,36 @@ class OCPPFilter:
         if not isinstance(payload, dict):
             self._logger.warning(f"OCPP 1.6 payload is not a dict: {payload!r} (cp_id={cp_id})")
             return None
+
+        if action == "BootNotification":
+            vendor = payload.get("chargePointVendor", "")
+            model = payload.get("chargePointModel", "")
+            firmware = payload.get("firmwareVersion")
+            vendor_value = f"{vendor} {model}".strip()
+            sensors = [
+                OCPPSensorData(
+                    cp_id=cp_id,
+                    topic="vendor",
+                    unique_id=f"OCPP_{cp_id}_vendor",
+                    name=f"Vendor CP {cp_id}",
+                    value=vendor_value,
+                    manufacturer=self._manufacturer[cp_id],
+                    timestamp=timestamp,
+                )
+            ]
+            if firmware:
+                sensors.append(
+                    OCPPSensorData(
+                        cp_id=cp_id,
+                        topic="firmware",
+                        unique_id=f"OCPP_{cp_id}_firmware",
+                        name=f"Firmware CP {cp_id}",
+                        value=firmware,
+                        manufacturer=self._manufacturer[cp_id],
+                        timestamp=timestamp,
+                    )
+                )
+            return sensors
 
         if action == "StatusNotification":
             cable_id = payload.get("connectorId")
@@ -252,6 +291,37 @@ class OCPPFilter:
         if not isinstance(payload, dict):
             self._logger.warning(f"OCPP 2.0.1 payload is not a dict: {payload!r} (cp_id={cp_id})")
             return None
+
+        if action == "BootNotification":
+            charging_station = payload.get("chargingStation") or {}
+            vendor = charging_station.get("vendorName", "") if isinstance(charging_station, dict) else ""
+            model = charging_station.get("model", "") if isinstance(charging_station, dict) else ""
+            firmware = charging_station.get("firmwareVersion") if isinstance(charging_station, dict) else None
+            vendor_value = f"{vendor} {model}".strip()
+            sensors = [
+                OCPPSensorData(
+                    cp_id=cp_id,
+                    topic="vendor",
+                    unique_id=f"OCPP_{cp_id}_vendor",
+                    name=f"Vendor CP {cp_id}",
+                    value=vendor_value,
+                    manufacturer=self._manufacturer[cp_id],
+                    timestamp=timestamp,
+                )
+            ]
+            if firmware:
+                sensors.append(
+                    OCPPSensorData(
+                        cp_id=cp_id,
+                        topic="firmware",
+                        unique_id=f"OCPP_{cp_id}_firmware",
+                        name=f"Firmware CP {cp_id}",
+                        value=firmware,
+                        manufacturer=self._manufacturer[cp_id],
+                        timestamp=timestamp,
+                    )
+                )
+            return sensors
 
         if action == "StatusNotification":
             # Some implementations may use evseId or connectorId; likewise some

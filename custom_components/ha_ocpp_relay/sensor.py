@@ -13,7 +13,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_CPMS_URL, DOMAIN, SIGNAL_NEW_SENSOR, SIGNAL_SENSOR_UPDATE
@@ -96,6 +96,8 @@ async def async_setup_entry(
 
 class OCPPSensorEntity(SensorEntity, RestoreEntity):
     _attr_has_entity_name = True
+    _DIAGNOSTIC_ID_SUFFIXES: tuple[str, ...] = ("_heartbeat", "_vendor", "_firmware")
+    _RESTORE_ID_SUFFIXES: tuple[str, ...] = ("_vendor", "_firmware")
 
     def __init__(self, entry: ConfigEntry, client: OCPPSnoopClient, unique_id: str) -> None:
         """Initialize the instance state."""
@@ -104,10 +106,17 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
         self._ocpp_unique_id = unique_id
         self._unsub = None
         self._restored_value = None
+        self._restore_on_unavailable = False
 
         sensor = self._client.sensors[self._ocpp_unique_id]
         self._attr_unique_id = f"{self._entry.entry_id}_{sensor.unique_id}"
         self._attr_name = sensor.name
+        if unique_id.endswith(self._DIAGNOSTIC_ID_SUFFIXES):
+            self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._restore_on_unavailable = (
+            sensor.device_class == "energy"
+            or unique_id.endswith(self._RESTORE_ID_SUFFIXES)
+        )
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to per-entry sensor update events and restore state for energy sensors."""
@@ -123,9 +132,9 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
             _on_update,
         )
 
-        # Restore last state for energy sensors
+        # Restore last state for sensors that should survive temporary source gaps.
         sensor = self._client.sensors.get(self._ocpp_unique_id)
-        if sensor and sensor.device_class == "energy":
+        if sensor and self._restore_on_unavailable:
             last_state = await self.async_get_last_state()
             if last_state and last_state.state not in (None, "unknown", "unavailable"):
                 self._restored_value = last_state.state
@@ -151,12 +160,13 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
         """
         sensor = self._sensor
         if sensor is None:
-            # Only restore for energy sensors
-            if self.device_class == SensorDeviceClass.ENERGY and self._restored_value is not None:
-                try:
-                    return float(self._restored_value)
-                except (TypeError, ValueError):
-                    return self._restored_value
+            if self._restore_on_unavailable and self._restored_value is not None:
+                if self.device_class == SensorDeviceClass.ENERGY:
+                    try:
+                        return float(self._restored_value)
+                    except (TypeError, ValueError):
+                        return self._restored_value
+                return self._restored_value
             return None
 
         if sensor.device_class == "timestamp" and sensor.value:
@@ -177,8 +187,8 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
     def available(self) -> bool:
         """Energy sensors are always available (show last value); others use default logic."""
         sensor = self._sensor
-        if self.device_class == SensorDeviceClass.ENERGY:
-            # Always available if we have a value (live or restored)
+        if self._restore_on_unavailable:
+            # Available if we have a value (live or restored)
             return sensor is not None or self._restored_value is not None
         # Default: available if sensor is present
         return sensor is not None
