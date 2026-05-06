@@ -1,6 +1,7 @@
 # EV Charger OCPP Relay for Home Assistant
 
 [![](https://img.shields.io/badge/GitHub-View_Repository-blue?logo=github)](https://github.com/michael-adler/ha-ocpp-relay)
+[![](https://img.shields.io/badge/Requires-Internet-critical)](#ev-charger-ocpp-relay-for-home-assistant)
 
 EV chargers are typically controlled by the [Open Charge Point Protocol](https://openchargealliance.org/protocols/open-charge-point-protocol/) \(OCPP\). The protocol includes metering. For some users, connecting to a particular remote OCPP server is essential for electrical billing discounts or access control. The code here monitors OCPP traffic to track energy use but acts only as a relay between an EV charger and the remote Charge Point Management System \(CPMS\). The relay exposes a second socket where OCPP traffic can be monitored. Multiple clients may connect to the snoop service and each one receives the same read-only OCPP JSON stream.
 
