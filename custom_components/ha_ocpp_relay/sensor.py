@@ -13,6 +13,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -34,6 +35,28 @@ def _load_manifest_version() -> str | None:
 
 
 _INTEGRATION_SW_VERSION = _load_manifest_version()
+
+
+def _registry_sensor_entries(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, str | None]:
+    """Return known OCPP sensor IDs already stored in HA's entity registry.
+
+    This allows recreating entities immediately after integration reload,
+    before fresh OCPP frames arrive.
+    """
+    entity_registry = er.async_get(hass)
+    entries: dict[str, str | None] = {}
+    unique_id_prefix = f"{entry.entry_id}_"
+
+    for registry_entry in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
+        if registry_entry.domain != "sensor" or registry_entry.platform != DOMAIN:
+            continue
+        if not registry_entry.unique_id.startswith(unique_id_prefix):
+            continue
+
+        ocpp_unique_id = registry_entry.unique_id[len(unique_id_prefix) :]
+        entries[ocpp_unique_id] = registry_entry.original_name or registry_entry.name
+
+    return entries
 
 
 def _configuration_url(value: str | None) -> str | None:
@@ -63,20 +86,23 @@ async def async_setup_entry(
     """
     client: OCPPSnoopClient = hass.data[DOMAIN][entry.entry_id]["client"]
     known_entities: dict[str, OCPPSensorEntity] = {}
+    registry_entries = _registry_sensor_entries(hass, entry)
 
     def add_entity(unique_id: str) -> None:
         """Create and register an entity for one discovered sensor ID."""
         if unique_id in known_entities:
             return
-        sensor_data = client.sensors.get(unique_id)
-        if sensor_data is None:
-            return
 
-        entity = OCPPSensorEntity(entry, client, unique_id)
+        entity = OCPPSensorEntity(
+            entry,
+            client,
+            unique_id,
+            restored_name=registry_entries.get(unique_id),
+        )
         known_entities[unique_id] = entity
         async_add_entities([entity])
 
-    for unique_id in client.sensors.keys():
+    for unique_id in sorted(set(client.sensors.keys()) | set(registry_entries.keys())):
         add_entity(unique_id)
 
     @callback
@@ -99,24 +125,37 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
     _DIAGNOSTIC_ID_SUFFIXES: tuple[str, ...] = ("_heartbeat", "_vendor", "_firmware")
     _RESTORE_ID_SUFFIXES: tuple[str, ...] = ("_vendor", "_firmware")
 
-    def __init__(self, entry: ConfigEntry, client: OCPPSnoopClient, unique_id: str) -> None:
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        client: OCPPSnoopClient,
+        unique_id: str,
+        restored_name: str | None = None,
+    ) -> None:
         """Initialize the instance state."""
         self._entry = entry
         self._client = client
         self._ocpp_unique_id = unique_id
         self._unsub = None
         self._restored_value = None
-        self._restore_on_unavailable = False
+        self._restored_device_class = None
+        self._restored_state_class = None
+        self._restored_native_unit = None
+        self._restored_attributes = None
+        self._restore_on_unavailable = unique_id.endswith(self._RESTORE_ID_SUFFIXES)
 
-        sensor = self._client.sensors[self._ocpp_unique_id]
-        self._attr_unique_id = f"{self._entry.entry_id}_{sensor.unique_id}"
-        self._attr_name = sensor.name
+        sensor = self._client.sensors.get(self._ocpp_unique_id)
+        self._attr_unique_id = f"{self._entry.entry_id}_{self._ocpp_unique_id}"
+        if sensor is not None:
+            self._attr_name = sensor.name
+        elif restored_name:
+            self._attr_name = restored_name
+        else:
+            self._attr_name = self._ocpp_unique_id
         if unique_id.endswith(self._DIAGNOSTIC_ID_SUFFIXES):
             self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._restore_on_unavailable = (
-            sensor.device_class == "energy"
-            or unique_id.endswith(self._RESTORE_ID_SUFFIXES)
-        )
+        if sensor is not None and sensor.device_class == "energy":
+            self._restore_on_unavailable = True
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to per-entry sensor update events and restore state for energy sensors."""
@@ -124,6 +163,11 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
         def _on_update(unique_id: str) -> None:
             """Write HA state when this entity's backing sensor changes."""
             if unique_id == self._ocpp_unique_id:
+                sensor = self._sensor
+                if sensor is not None:
+                    self._attr_name = sensor.name
+                    if sensor.device_class == "energy":
+                        self._restore_on_unavailable = True
                 self.async_write_ha_state()
 
         self._unsub = async_dispatcher_connect(
@@ -133,11 +177,25 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
         )
 
         # Restore last state for sensors that should survive temporary source gaps.
-        sensor = self._client.sensors.get(self._ocpp_unique_id)
-        if sensor and self._restore_on_unavailable:
-            last_state = await self.async_get_last_state()
-            if last_state and last_state.state not in (None, "unknown", "unavailable"):
-                self._restored_value = last_state.state
+        last_state = await self.async_get_last_state()
+        if last_state is None:
+            return
+
+        last_attrs = dict(last_state.attributes)
+        self._restored_device_class = last_attrs.get("device_class")
+        self._restored_state_class = last_attrs.get("state_class")
+        self._restored_native_unit = last_attrs.get("unit_of_measurement")
+        self._restored_attributes = {
+            key: last_attrs.get(key)
+            for key in ("cp_id", "topic", "timestamp", "manufacturer")
+            if last_attrs.get(key) is not None
+        }
+
+        if self._restored_device_class == "energy":
+            self._restore_on_unavailable = True
+
+        if self._restore_on_unavailable and last_state.state not in (None, "unknown", "unavailable"):
+            self._restored_value = last_state.state
 
     async def async_will_remove_from_hass(self) -> None:
         """Disconnect dispatcher subscriptions before entity removal."""
@@ -197,7 +255,9 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
     def native_unit_of_measurement(self):
         """Expose the unit parsed from OCPP sampled value payloads."""
         sensor = self._sensor
-        return None if sensor is None else sensor.unit
+        if sensor is None:
+            return self._restored_native_unit
+        return sensor.unit
 
     _DEVICE_CLASS_MAP: dict[str, SensorDeviceClass] = {
         "current": SensorDeviceClass.CURRENT,
@@ -217,24 +277,36 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
     def device_class(self) -> SensorDeviceClass | None:
         """Map parser-derived semantic type to Home Assistant device class."""
         sensor = self._sensor
-        if sensor is None or sensor.device_class is None:
-            return None
-        return self._DEVICE_CLASS_MAP.get(sensor.device_class)
+        if sensor is not None and sensor.device_class is not None:
+            return self._DEVICE_CLASS_MAP.get(sensor.device_class)
+
+        restored_device_class = self._restored_device_class
+        if isinstance(restored_device_class, SensorDeviceClass):
+            return restored_device_class
+        if isinstance(restored_device_class, str):
+            return self._DEVICE_CLASS_MAP.get(restored_device_class)
+        return None
 
     @property
     def state_class(self) -> SensorStateClass | None:
         """Expose state class so long-term statistics are computed correctly."""
         sensor = self._sensor
-        if sensor is None or sensor.state_class is None:
-            return None
-        return self._STATE_CLASS_MAP.get(sensor.state_class)
+        if sensor is not None and sensor.state_class is not None:
+            return self._STATE_CLASS_MAP.get(sensor.state_class)
+
+        restored_state_class = self._restored_state_class
+        if isinstance(restored_state_class, SensorStateClass):
+            return restored_state_class
+        if isinstance(restored_state_class, str):
+            return self._STATE_CLASS_MAP.get(restored_state_class)
+        return None
 
     @property
     def extra_state_attributes(self):
         """Attach protocol context useful for debugging and automation rules."""
         sensor = self._sensor
         if sensor is None:
-            return None
+            return self._restored_attributes
 
         attrs = {
             "cp_id": sensor.cp_id,
