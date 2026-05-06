@@ -6,8 +6,8 @@
   ],
   "config_flow": true,
   "documentation": "https://github.com/michael-adler/ha-ocpp-relay",
-  "issue_tracker": "https://github.com/michael-adler/ha-ocpp-relay/issues",
   "iot_class": "local_push",
+  "issue_tracker": "https://github.com/michael-adler/ha-ocpp-relay/issues",
   "loggers": [
     "custom_components.ha_ocpp_relay"
   ],
