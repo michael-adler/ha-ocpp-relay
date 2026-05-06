@@ -76,10 +76,51 @@ jobs:
           git tag "v${{ steps.version.outputs.version }}"
           git push origin "v${{ steps.version.outputs.version }}"
 
+      - name: Build release body
+        id: release_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.prerelease }}" == "true" ]]; then
+            echo "body=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          repo="${{ github.repository }}"
+          current_tag="v${{ steps.version.outputs.version }}"
+          releases_api="https://api.github.com/repos/${repo}/releases?per_page=100"
+
+          previous_tag=$(curl -fsSL \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "$releases_api" \
+            | jq -r --arg current "$current_tag" '
+                [.[]
+                | select(.draft | not)
+                | select(.prerelease | not)
+                | select(.tag_name != $current)]
+                | sort_by(.published_at)
+                | reverse
+                | .[0].tag_name // empty
+              ')
+
+          if [[ -z "$previous_tag" ]]; then
+            echo "body=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          compare_url="https://github.com/${repo}/compare/${previous_tag}...${current_tag}"
+          {
+            echo "body<<EOF"
+            echo "**Diff**: ${compare_url}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: v${{ steps.version.outputs.version }}
+          body: ${{ steps.release_meta.outputs.body }}
           generate_release_notes: true
           prerelease: ${{ inputs.prerelease }}
