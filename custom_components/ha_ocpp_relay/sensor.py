@@ -21,6 +21,7 @@ from .const import CONF_CPMS_URL, DOMAIN, SIGNAL_NEW_SENSOR, SIGNAL_SENSOR_UPDAT
 from .snoop.client import OCPPSnoopClient
 
 _LOGGER = logging.getLogger(__name__)
+_DEVICE_MANUFACTURER = "OCPP Relay"
 
 
 def _load_manifest_version() -> str | None:
@@ -125,6 +126,19 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
     _DIAGNOSTIC_ID_SUFFIXES: tuple[str, ...] = ("_heartbeat", "_vendor", "_firmware")
     _RESTORE_ID_SUFFIXES: tuple[str, ...] = ("_vendor", "_firmware")
 
+    @staticmethod
+    def _cp_id_from_unique_id(unique_id: str) -> str | None:
+        """Extract charge point ID from normalized OCPP sensor unique_id.
+
+        IDs are generated as "OCPP_<cp_id>_<topic...>".  This fallback keeps
+        device linking stable while live snoop data is not yet available.
+        """
+        if not unique_id.startswith("OCPP_"):
+            return None
+        remainder = unique_id[len("OCPP_") :]
+        cp_id, _, _topic = remainder.partition("_")
+        return cp_id or None
+
     def __init__(
         self,
         entry: ConfigEntry,
@@ -142,6 +156,7 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
         self._restored_state_class = None
         self._restored_native_unit = None
         self._restored_attributes = None
+        self._restored_cp_id = self._cp_id_from_unique_id(unique_id)
         self._restore_on_unavailable = unique_id.endswith(self._RESTORE_ID_SUFFIXES)
 
         sensor = self._client.sensors.get(self._ocpp_unique_id)
@@ -190,6 +205,8 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
             for key in ("cp_id", "topic", "timestamp", "manufacturer")
             if last_attrs.get(key) is not None
         }
+        if self._restored_attributes.get("cp_id"):
+            self._restored_cp_id = str(self._restored_attributes["cp_id"])
 
         if self._restored_device_class == "energy":
             self._restore_on_unavailable = True
@@ -321,14 +338,20 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
     def device_info(self) -> DeviceInfo | None:
         """Group sensors under one HA device per charge point ID."""
         sensor = self._sensor
-        if sensor is None or not sensor.cp_id:
+        cp_id = None
+        if sensor is not None and sensor.cp_id:
+            cp_id = sensor.cp_id
+        else:
+            cp_id = self._restored_cp_id
+
+        if not cp_id:
             return None
 
         return DeviceInfo(
-            identifiers={(DOMAIN, f"{self._entry.entry_id}_{sensor.cp_id}")},
-            name=f"Charge Point {sensor.cp_id}",
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_{cp_id}")},
+            name=f"Charge Point {cp_id}",
             suggested_area=self._entry.title or None,
-            manufacturer=sensor.manufacturer,
+            manufacturer=_DEVICE_MANUFACTURER,
             model="OCPP Charge Point",
             sw_version=_INTEGRATION_SW_VERSION,
             configuration_url=_configuration_url(self._entry.data.get(CONF_CPMS_URL)),
