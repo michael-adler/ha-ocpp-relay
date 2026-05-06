@@ -62,7 +62,7 @@ Arrows describe the direction in which websockets are opened, toward the listene
 and not the direction in which data flows. OCPP relay traffic is bidirectional and
 snoop data flows from the relay toward the snoop client.
 
-<img src="docs/img/architecture.svg" style="width: 80%; height: auto;" alt="Diagram">
+<img src="https://raw.githubusercontent.com/michael-adler/ha-ocpp-relay/refs/heads/main/docs/img/architecture.svg" style="width: 80%; height: auto;" alt="Diagram">
 
 The relay supports multiple simultaneous EV charger connections and relays them to
 individual, private OCPP server connections. Traffic from all relayed connections
