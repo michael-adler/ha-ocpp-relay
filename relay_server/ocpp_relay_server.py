@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+import ipaddress
 import ssl
 import sys
 
@@ -105,6 +106,21 @@ def get_csms_ssl_context(csms_ca_cert: str | None) -> ssl.SSLContext | None:
     return ctx
 
 
+def is_loopback_host(host: str | None) -> bool:
+    """Return True when *host* is localhost or any loopback IP literal."""
+    if host is None:
+        return False
+
+    normalized = host.strip().strip("[]").lower()
+    if normalized == "localhost":
+        return True
+
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
 async def core(args):
     """Start relay and snoop servers and keep both running.
 
@@ -122,8 +138,8 @@ async def core(args):
     snoop_server = await snoop.start(
         args.snoop_host,
         args.snoop_port,
-        # Keep localhost development simple; use TLS only for externally reachable snoop endpoint.
-        ssl_context=(None if args.snoop_host == "localhost" else ssl_context),
+        # Keep loopback development simple; use TLS only for externally reachable snoop endpoint.
+        ssl_context=(None if is_loopback_host(args.snoop_host) else ssl_context),
     )
 
     await asyncio.gather(relay_server.wait_closed(), snoop_server.wait_closed())
