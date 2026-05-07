@@ -60,33 +60,14 @@ async def stream_log_to_clients(snoop_server, log_lines):
         except Exception as e:
             logger.error(f"Error enqueuing playback message: {e}")
 
-    # Allow some time for broadcasts to be delivered, then politely close client sockets.
-    # Increase grace period so clients can complete any pending reads/handshakes.
+    # Allow some time for broadcasts to be delivered, then shut down cleanly.
+    # stop() acquires the internal lock, closes each client socket using the
+    # shared _close_ws() helper (which is safe for all websockets versions), and
+    # cancels the fanout task — avoiding the deprecated .open attribute check and
+    # the lock-free iteration of _snoop_sockets that were previously used here.
     await asyncio.sleep(1.0)
-    logger.info("Playback finished, closing snoop client sockets")
-    for ws in list(getattr(snoop_server, "_snoop_sockets", [])):
-        try:
-            # Only attempt an orderly close for sockets that reached OPEN state.
-            if getattr(ws, "open", False):
-                # Request a polite close (1000 = normal) and wait briefly for acknowledgement.
-                try:
-                    await ws.close(code=1000, reason="playback finished")
-                except TypeError:
-                    # Older websockets versions may not accept code/reason params.
-                    await ws.close()
-
-                # Wait for the TCP/websocket close to complete, but don't block indefinitely.
-                wait_coro = getattr(ws, "wait_closed", None)
-                if callable(wait_coro):
-                    try:
-                        await asyncio.wait_for(wait_coro(), timeout=1.0)
-                    except Exception:
-                        # Fall through and discard socket below
-                        pass
-            else:
-                logger.debug("Snoop socket not open, skipping polite close")
-        except Exception:
-            pass
+    logger.info("Playback finished, stopping snoop server")
+    await snoop_server.stop()
 
 
 async def main_async(args):

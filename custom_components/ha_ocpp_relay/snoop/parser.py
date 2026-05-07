@@ -36,7 +36,16 @@ class OCPPFilter:
         This is the protocol boundary where raw OCPP message arrays become
         stable sensor records consumed by the Home Assistant sensor platform.
         """
-        if self._field(msg, "event") != "Message":
+        event = self._field(msg, "event")
+
+        # Reset the manufacturer cache when a charge point reconnects so that a
+        # new BootNotification can update the stored vendor information.
+        if event in ("Connection", "Disconnection"):
+            cp_id = self._field(msg, "cp_id") or "unknown"
+            self._manufacturer.pop(cp_id, None)
+            return None
+
+        if event != "Message":
             return None
         if self._field(msg, "sender") != "CP":
             return None

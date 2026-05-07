@@ -8,10 +8,9 @@ from .const import (
     CONF_RELAY_IS_LOCAL,
     DOMAIN,
     PLATFORMS,
+    SKIP_NEXT_UPDATE_RELOAD,
     normalize_relay_config,
 )
-
-_SKIP_NEXT_UPDATE_RELOAD = "skip_next_update_reload"
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -50,9 +49,9 @@ def _consume_skip_next_update_reload(hass: HomeAssistant, entry: ConfigEntry) ->
     runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if runtime is None:
         return False
-    if not runtime.get(_SKIP_NEXT_UPDATE_RELOAD):
+    if not runtime.get(SKIP_NEXT_UPDATE_RELOAD):
         return False
-    runtime.pop(_SKIP_NEXT_UPDATE_RELOAD, None)
+    runtime.pop(SKIP_NEXT_UPDATE_RELOAD, None)
     return True
 
 

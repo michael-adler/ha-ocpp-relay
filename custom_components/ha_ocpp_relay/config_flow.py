@@ -22,11 +22,10 @@ from .const import (
     DEFAULT_RELAY_SNOOP_PORT,
     DEFAULT_SNOOP_SOCKET,
     DOMAIN,
+    SKIP_NEXT_UPDATE_RELOAD,
     default_snoop_socket_for_container,
     normalize_relay_config,
 )
-
-_SKIP_NEXT_UPDATE_RELOAD = "skip_next_update_reload"
 
 
 def _config_schema(defaults: dict) -> vol.Schema:
@@ -221,7 +220,7 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # masked by stale options from previous edits.
             runtime = self.hass.data.get(DOMAIN, {}).get(reconfigure_entry.entry_id)
             if runtime is not None:
-                runtime[_SKIP_NEXT_UPDATE_RELOAD] = True
+                runtime[SKIP_NEXT_UPDATE_RELOAD] = True
             return self.async_update_reload_and_abort(
                 reconfigure_entry,
                 title=reconfigure_entry.title,

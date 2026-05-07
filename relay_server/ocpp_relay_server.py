@@ -107,7 +107,13 @@ def get_csms_ssl_context(csms_ca_cert: str | None) -> ssl.SSLContext | None:
 
 
 def is_loopback_host(host: str | None) -> bool:
-    """Return True when *host* is localhost or any loopback IP literal."""
+    """Return True when *host* is localhost or any loopback IP literal.
+
+    Returns False for None (bind-all / unspecified), which is treated as a
+    potentially external interface so TLS is applied when an ssl_context is
+    configured.  Callers that want to suppress TLS for bind-all addresses must
+    do so explicitly.
+    """
     if host is None:
         return False
 
@@ -138,7 +144,11 @@ async def core(args):
     snoop_server = await snoop.start(
         args.snoop_host,
         args.snoop_port,
-        # Keep loopback development simple; use TLS only for externally reachable snoop endpoint.
+        # Use TLS for any snoop host that is not a loopback address.
+        # is_loopback_host(None) returns False intentionally: a None / bind-all
+        # host is treated as potentially externally reachable, so TLS is applied
+        # when ssl_context is configured.  Pass --snoop-host localhost (or a
+        # loopback IP) explicitly to run the snoop endpoint without TLS.
         ssl_context=(None if is_loopback_host(args.snoop_host) else ssl_context),
     )
 

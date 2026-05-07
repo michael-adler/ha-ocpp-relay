@@ -21,6 +21,11 @@ DEFAULT_SNOOP_SOCKET = "ws://127.0.0.1:8501/"
 SIGNAL_NEW_SENSOR = "ha_ocpp_relay_new_sensor"
 SIGNAL_SENSOR_UPDATE = "ha_ocpp_relay_sensor_update"
 
+# Key used to suppress a redundant reload triggered by the update listener
+# immediately after a programmatic config entry write.  Defined here so that
+# __init__.py and config_flow.py share a single source of truth.
+SKIP_NEXT_UPDATE_RELOAD = "skip_next_update_reload"
+
 
 def default_snoop_socket_for_container(port: int) -> str:
     """Build the default local snoop websocket URL from a configured port."""

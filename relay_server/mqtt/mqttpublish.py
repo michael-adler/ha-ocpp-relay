@@ -68,6 +68,8 @@ class MQTTPublisher:
 
         await self._connected_event.wait()
 
+        loop = asyncio.get_running_loop()
+
         while True:
             try:
                 data: SensorData = await asyncio.wait_for(self._queue.get(), timeout=5.0)
@@ -78,7 +80,9 @@ class MQTTPublisher:
 
                 disc_info = self._mqtt_discover(data)
                 if disc_info:
-                    disc_info.wait_for_publish()
+                    # wait_for_publish() is a blocking paho-mqtt call; run it in
+                    # a thread-pool executor so it does not stall the event loop.
+                    await loop.run_in_executor(None, disc_info.wait_for_publish)
                     await asyncio.sleep(2)
 
                 last_msg_info = self._mqtt_publish_data(data)
@@ -90,7 +94,7 @@ class MQTTPublisher:
                 break
 
         if last_msg_info:
-            last_msg_info.wait_for_publish()
+            await loop.run_in_executor(None, last_msg_info.wait_for_publish)
         self._mqtt.disconnect()
         self._mqtt.loop_stop()
         self._logger.info("MQTTPublisher run() task exiting.")
