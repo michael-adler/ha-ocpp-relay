@@ -335,6 +335,8 @@ class OCPPRelay:
         protocol: str,
     ) -> None:
         """Forward frames one direction and optionally mirror them to snoop."""
+        _warn_count = 0
+        _WARN_LIMIT = 100
         while True:
             try:
                 message = await source_ws.recv()
@@ -348,9 +350,22 @@ class OCPPRelay:
             try:
                 json_message = json.loads(message)
             except json.JSONDecodeError as err:
-                self._logger.warning(
-                    "Non-JSON frame from %s for CP %s (dropping): %s", source_name, cp_id, err
-                )
+                if _warn_count < _WARN_LIMIT:
+                    self._logger.warning(
+                        "Non-JSON frame from %s for CP %s (dropping): %s", source_name, cp_id, err
+                    )
+                    _warn_count += 1
+                continue
+
+            if not isinstance(json_message, list) or len(json_message) < 3:
+                if _warn_count < _WARN_LIMIT:
+                    self._logger.warning(
+                        "Malformed OCPP frame from %s for CP %s (dropping): %r",
+                        source_name,
+                        cp_id,
+                        json_message,
+                    )
+                    _warn_count += 1
                 continue
 
             try:
