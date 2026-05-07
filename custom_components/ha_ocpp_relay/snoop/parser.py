@@ -261,15 +261,18 @@ class OCPPFilter:
                     if not isinstance(sampled_value, dict):
                         self._logger.warning(f"Invalid sampledValue entry: {sampled_value!r} (cp_id={cp_id})")
                         continue
-                    # Resolve unit and multiplier (some vendors include unitOfMeasure objects)
-                    unit_obj = sampled_value.get("unitOfMeasure") or {}
+                    # Resolve unit and multiplier (unitOfMeasure can be a string or dict)
+                    unit_obj = sampled_value.get("unitOfMeasure")
                     unit = sampled_value.get("unit")
-                    if isinstance(unit_obj, dict):
+                    multiplier = None
+                    if isinstance(unit_obj, str):
+                        # unitOfMeasure is a string representing the unit directly
+                        unit = unit_obj
+                    elif isinstance(unit_obj, dict):
+                        # unitOfMeasure is a structured dict with unit and multiplier
                         if "unit" in unit_obj:
                             unit = unit_obj.get("unit")
                         multiplier = unit_obj.get("multiplier")
-                    else:
-                        multiplier = None
 
                     value = sampled_value.get("value")
                     if multiplier is not None:
@@ -379,23 +382,28 @@ class OCPPFilter:
                     if not isinstance(sampled_value, dict):
                         self._logger.warning(f"Invalid sampledValue entry: {sampled_value!r} (cp_id={cp_id})")
                         continue
-                    unit_obj = sampled_value.get("unitOfMeasure") or {}
+                    unit_obj = sampled_value.get("unitOfMeasure")
                     measurand = sampled_value.get("measurand") or "Energy.Active.Import.Register"
-                    if "unit" in unit_obj:
-                        unit = unit_obj["unit"]
-                    elif measurand.startswith("Power"):
-                        unit = "W"
-                    elif measurand.startswith("Current"):
-                        unit = "A"
-                    elif measurand.startswith("Voltage"):
-                        unit = "V"
-                    else:
-                        unit = "Wh"
-
-                    # Apply unitOfMeasure.multiplier when present
                     multiplier = None
-                    if isinstance(unit_obj, dict):
+                    if isinstance(unit_obj, str):
+                        # unitOfMeasure is a string representing the unit directly
+                        unit = unit_obj
+                    elif isinstance(unit_obj, dict):
+                        # unitOfMeasure is a structured dict with unit and multiplier
+                        unit = unit_obj.get("unit")
                         multiplier = unit_obj.get("multiplier")
+                    else:
+                        unit = None
+                    # Infer unit from measurand if not already set
+                    if not unit:
+                        if measurand.startswith("Power"):
+                            unit = "W"
+                        elif measurand.startswith("Current"):
+                            unit = "A"
+                        elif measurand.startswith("Voltage"):
+                            unit = "V"
+                        else:
+                            unit = "Wh"
 
                     value = sampled_value.get("value")
                     if multiplier is not None:
