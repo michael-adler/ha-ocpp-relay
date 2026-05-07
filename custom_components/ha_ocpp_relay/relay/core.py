@@ -206,6 +206,12 @@ class OCPPRelay:
         """Bridge one charge point connection to the configured CSMS peer."""
         # The CP identifier is encoded in the websocket URL path.
         charge_point_id = cp_ws.request.path.strip("/")
+        if not charge_point_id:
+            self._logger.error(
+                "Charge point connected with empty path; closing connection (code=4001)."
+            )
+            await cp_ws.close(code=4001, reason="missing charge point id")
+            return
 
         # Prefer the negotiated subprotocol attribute set by the websockets server.
         # Fallback to the Sec-WebSocket-Protocol header if the negotiated value
