@@ -11,11 +11,17 @@ class OCPPFilter:
     """Stateful parser for OCPP snoop messages into Home Assistant sensor data."""
 
     _protocol_version_re = re.compile(r"([0-9]+\.[0-9]+(\.[0-9]+)?)")
+    _MANUFACTURER_UNSET = object()
 
     def __init__(self) -> None:
         """Initialize the instance state."""
         self._logger = logging.getLogger(__name__)
-        self._manufacturer: dict[str, str | None] = {}
+        self._manufacturer: dict[str, object | str | None] = {}
+
+    def _cached_manufacturer(self, cp_id: str) -> str | None:
+        """Return normalized cache value for sensor payloads."""
+        value = self._manufacturer.get(cp_id, self._MANUFACTURER_UNSET)
+        return None if value is self._MANUFACTURER_UNSET else value
 
     @staticmethod
     def _field(msg: Any, key: str, default=None):
@@ -54,11 +60,15 @@ class OCPPFilter:
         if ocpp[0] != 2:
             return None
 
-        # Cache vendor/manufacturer per charge point when it first appears.
+        # Cache vendor/manufacturer per charge point when a matching frame appears.
         if cp_id not in self._manufacturer:
-            self._manufacturer[cp_id] = None
-        if not self._manufacturer[cp_id]:
-            self._manufacturer[cp_id] = self._get_manufacturer(ocpp)
+            self._manufacturer[cp_id] = self._MANUFACTURER_UNSET
+        if self._manufacturer[cp_id] is self._MANUFACTURER_UNSET:
+            manufacturer = self._get_manufacturer(ocpp)
+            if manufacturer is not None:
+                self._manufacturer[cp_id] = manufacturer
+
+        manufacturer = self._cached_manufacturer(cp_id)
 
         timestamp = self._field(msg, "timestamp")
         if ocpp[2] == "Heartbeat":
@@ -71,7 +81,7 @@ class OCPPFilter:
                     name=f"Heartbeat CP {cp_id}",
                     device_class="timestamp",
                     value=timestamp,
-                    manufacturer=self._manufacturer[cp_id],
+                    manufacturer=manufacturer,
                     timestamp=timestamp,
                 )
             ]
@@ -161,7 +171,7 @@ class OCPPFilter:
             unique_id=unique_id,
             name=name,
             value=value,
-            manufacturer=self._manufacturer[cp_id],
+            manufacturer=self._cached_manufacturer(cp_id),
             device_class=device_class,
             state_class=state_class,
             unit=unit,
@@ -189,7 +199,7 @@ class OCPPFilter:
                     unique_id=f"OCPP_{cp_id}_vendor",
                     name=f"Vendor CP {cp_id}",
                     value=vendor_value,
-                    manufacturer=self._manufacturer[cp_id],
+                    manufacturer=self._cached_manufacturer(cp_id),
                     timestamp=timestamp,
                 )
             ]
@@ -201,7 +211,7 @@ class OCPPFilter:
                         unique_id=f"OCPP_{cp_id}_firmware",
                         name=f"Firmware CP {cp_id}",
                         value=firmware,
-                        manufacturer=self._manufacturer[cp_id],
+                        manufacturer=self._cached_manufacturer(cp_id),
                         timestamp=timestamp,
                     )
                 )
@@ -223,7 +233,7 @@ class OCPPFilter:
                     unique_id=unique_id,
                     name=name,
                     value=status,
-                    manufacturer=self._manufacturer[cp_id],
+                    manufacturer=self._cached_manufacturer(cp_id),
                     timestamp=timestamp,
                 )
             ]
@@ -305,7 +315,7 @@ class OCPPFilter:
                     unique_id=f"OCPP_{cp_id}_vendor",
                     name=f"Vendor CP {cp_id}",
                     value=vendor_value,
-                    manufacturer=self._manufacturer[cp_id],
+                    manufacturer=self._cached_manufacturer(cp_id),
                     timestamp=timestamp,
                 )
             ]
@@ -317,7 +327,7 @@ class OCPPFilter:
                         unique_id=f"OCPP_{cp_id}_firmware",
                         name=f"Firmware CP {cp_id}",
                         value=firmware,
-                        manufacturer=self._manufacturer[cp_id],
+                        manufacturer=self._cached_manufacturer(cp_id),
                         timestamp=timestamp,
                     )
                 )
@@ -341,7 +351,7 @@ class OCPPFilter:
                     unique_id=unique_id,
                     name=name,
                     value=connector_status,
-                    manufacturer=self._manufacturer[cp_id],
+                    manufacturer=self._cached_manufacturer(cp_id),
                     timestamp=timestamp,
                 )
             ]
