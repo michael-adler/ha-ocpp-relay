@@ -9,6 +9,7 @@ from dataclasses import asdict
 import json
 import logging
 import ssl
+import weakref
 from urllib.parse import urlsplit, urlunsplit
 
 import websockets
@@ -64,7 +65,33 @@ class SnoopWebSocketServer:
         self._logger = logging.getLogger(__name__)
         self._snoop_queue = snoop_queue
         self._snoop_sockets: set = set()
+        self._closing_sockets: weakref.WeakSet = weakref.WeakSet()
+        self._closed_sockets: weakref.WeakSet = weakref.WeakSet()
+        self._snoop_sockets_lock = asyncio.Lock()
         self._forward_task: asyncio.Task | None = None
+
+    async def _drop_socket(self, ws, *, close: bool) -> None:
+        """Remove a socket from fanout and close it at most once."""
+        should_close = False
+        async with self._snoop_sockets_lock:
+            self._snoop_sockets.discard(ws)
+            if (
+                close
+                and ws not in self._closing_sockets
+                and ws not in self._closed_sockets
+            ):
+                self._closing_sockets.add(ws)
+                should_close = True
+
+        if not should_close:
+            return
+
+        try:
+            await _close_ws(ws)
+        finally:
+            async with self._snoop_sockets_lock:
+                self._closing_sockets.discard(ws)
+                self._closed_sockets.add(ws)
 
     async def start(self, host: str, port: int, ssl_context=None):
         """Start websocket serving and queue-to-client fanout task."""
@@ -81,9 +108,10 @@ class SnoopWebSocketServer:
                 await self._forward_task
             self._forward_task = None
         # Politely close any remaining snoop client sockets.
-        for ws in list(self._snoop_sockets):
-            await _close_ws(ws)
-            self._snoop_sockets.discard(ws)
+        async with self._snoop_sockets_lock:
+            sockets = list(self._snoop_sockets)
+        for ws in sockets:
+            await self._drop_socket(ws, close=True)
 
     async def _forward_messages(self) -> None:
         """Consume relay events and broadcast them to all snoop clients."""
@@ -91,17 +119,22 @@ class SnoopWebSocketServer:
             msg = await self._snoop_queue.get()
             msg_json = json.dumps(asdict(msg))
             # Iterate over a snapshot so disconnected sockets can be removed safely.
-            for ws in list(self._snoop_sockets):
+            async with self._snoop_sockets_lock:
+                sockets = list(self._snoop_sockets)
+            for ws in sockets:
                 try:
                     await ws.send(msg_json)
                 except Exception as err:  # noqa: BLE001
                     self._logger.warning("Error sending to snoop client: %s", err)
-                    self._snoop_sockets.discard(ws)
+                    await self._drop_socket(ws, close=True)
 
     async def _on_connect(self, ws) -> None:
         """Track one snoop client connection until it disconnects."""
         self._logger.info("Snoop client connected")
-        self._snoop_sockets.add(ws)
+        async with self._snoop_sockets_lock:
+            self._snoop_sockets.add(ws)
+            # Defensive cleanup when object ids are re-used in tests.
+            self._closed_sockets.discard(ws)
         try:
             while True:
                 await ws.recv()
@@ -109,9 +142,7 @@ class SnoopWebSocketServer:
             # Covers ConnectionClosedOK and ConnectionClosedError — both are subclasses.
             self._logger.info("Snoop connection closed")
         finally:
-            # Remove from set first, then close — prevents double-close race with stop().
-            self._snoop_sockets.discard(ws)
-            await _close_ws(ws)
+            await self._drop_socket(ws, close=True)
 
 
 class OCPPRelay:
