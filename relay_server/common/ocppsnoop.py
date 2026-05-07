@@ -2,6 +2,7 @@
 
 import json
 import logging
+from dataclasses import fields
 
 import websockets
 
@@ -19,7 +20,16 @@ async def receive_ocpp_snoop(ws_uri: str, exit_on_disconnect: bool = False):
             async for message in websocket:
                 try:
                     data = json.loads(message)
-                    yield MessageData(**data)
+                    # Filter to known MessageData fields to avoid TypeError on unexpected keys
+                    known_field_names = {f.name for f in fields(MessageData)}
+                    unexpected_keys = set(data.keys()) - known_field_names
+                    if unexpected_keys:
+                        logger.warning(
+                            "Snoop payload contains unexpected fields: %s. Ignoring them.",
+                            unexpected_keys
+                        )
+                    filtered_data = {k: v for k, v in data.items() if k in known_field_names}
+                    yield MessageData(**filtered_data)
                 except json.JSONDecodeError as err:
                     logger.error("Error decoding JSON: %s", err)
         except websockets.exceptions.ConnectionClosed as err:
@@ -51,7 +61,16 @@ def receive_ocpp_from_file(file_path: str):
             for line in infile:
                 try:
                     data = json.loads(line)
-                    yield MessageData(**data)
+                    # Filter to known MessageData fields to avoid TypeError on unexpected keys
+                    known_field_names = {f.name for f in fields(MessageData)}
+                    unexpected_keys = set(data.keys()) - known_field_names
+                    if unexpected_keys:
+                        logger.warning(
+                            "Snoop payload contains unexpected fields: %s. Ignoring them.",
+                            unexpected_keys
+                        )
+                    filtered_data = {k: v for k, v in data.items() if k in known_field_names}
+                    yield MessageData(**filtered_data)
                 except json.JSONDecodeError as err:
                     logger.error("Error decoding JSON: %s", err)
     except FileNotFoundError:
