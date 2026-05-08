@@ -45,17 +45,16 @@ def _mode_schema(default_is_local: bool) -> vol.Schema:
 def _details_schema(defaults: dict, is_local: bool) -> vol.Schema:
     """Build detail fields based on selected deployment mode.
 
-    Local mode requires a CPMS URL because HA will host relay+snoop servers.
-    External mode instead asks where to consume snoop data from.
+    Local mode requires OCPP/snoop bind addresses and the upstream CSMS URL.
+    External mode only needs the snoop socket URL to consume from a remote relay.
     """
-    fields: dict = {
-        vol.Required(CONF_RELAY_OCPP_HOST, default=defaults[CONF_RELAY_OCPP_HOST]): str,
-        vol.Required(CONF_RELAY_OCPP_PORT, default=defaults[CONF_RELAY_OCPP_PORT]): int,
-        vol.Required(CONF_RELAY_SNOOP_HOST, default=defaults[CONF_RELAY_SNOOP_HOST]): str,
-        vol.Required(CONF_RELAY_SNOOP_PORT, default=defaults[CONF_RELAY_SNOOP_PORT]): int,
-    }
+    fields: dict = {}
 
     if is_local:
+        fields[vol.Required(CONF_RELAY_OCPP_HOST, default=defaults[CONF_RELAY_OCPP_HOST])] = str
+        fields[vol.Required(CONF_RELAY_OCPP_PORT, default=defaults[CONF_RELAY_OCPP_PORT])] = int
+        fields[vol.Required(CONF_RELAY_SNOOP_HOST, default=defaults[CONF_RELAY_SNOOP_HOST])] = str
+        fields[vol.Required(CONF_RELAY_SNOOP_PORT, default=defaults[CONF_RELAY_SNOOP_PORT])] = int
         fields[vol.Required(CONF_CPMS_URL, default=defaults[CONF_CPMS_URL])] = str
     else:
         fields[vol.Optional(CONF_CPMS_URL, default=defaults[CONF_CPMS_URL])] = str
@@ -162,7 +161,14 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         reconfigure_entry = self._get_reconfigure_entry()
         merged = dict(reconfigure_entry.data)
         merged.update(reconfigure_entry.options)
-        self._external_config = reconfigure_entry.options.get("external_config", {})
+        self._external_config = reconfigure_entry.options.get(
+            "external_config",
+            {
+                CONF_RELAY_SNOOP_HOST: merged.get(CONF_RELAY_SNOOP_HOST),
+                CONF_RELAY_SNOOP_PORT: merged.get(CONF_RELAY_SNOOP_PORT),
+                CONF_SNOOP_SOCKET: merged.get(CONF_SNOOP_SOCKET),
+            },
+        )
         self._defaults = _defaults_from_mapping(merged)
         self._is_local = self._defaults[CONF_RELAY_IS_LOCAL]
 
@@ -290,7 +296,14 @@ class HaOcppRelayOptionsFlow(config_entries.OptionsFlow):
         self._config_entry = config_entry
         merged = dict(config_entry.data)
         merged.update(config_entry.options)
-        self._external_config = config_entry.options.get("external_config", {})
+        self._external_config = config_entry.options.get(
+            "external_config",
+            {
+                CONF_RELAY_SNOOP_HOST: merged.get(CONF_RELAY_SNOOP_HOST),
+                CONF_RELAY_SNOOP_PORT: merged.get(CONF_RELAY_SNOOP_PORT),
+                CONF_SNOOP_SOCKET: merged.get(CONF_SNOOP_SOCKET),
+            },
+        )
         self._defaults = _defaults_from_mapping(merged)
         self._is_local = self._defaults[CONF_RELAY_IS_LOCAL]
 
