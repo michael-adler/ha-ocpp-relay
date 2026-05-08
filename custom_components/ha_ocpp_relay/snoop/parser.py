@@ -154,8 +154,6 @@ class OCPPFilter:
         unique_id = f"OCPP_{cp_id}_{topic}".replace("/", "_")
 
         # Map W/Wh to kW/kWh, convert value, update unit and name
-        orig_unit = unit
-        orig_value = value
         if unit == "W":
             unit = "kW"
             try:
@@ -348,7 +346,7 @@ class OCPPFilter:
         if action == "StatusNotification":
             # Some implementations may use evseId or connectorId; likewise some
             # vendors still use 'status' field names. Accept common variants.
-            cable_id = payload.get("evseId") or payload.get("connectorId")
+            cable_id = payload["evseId"] if "evseId" in payload else payload.get("connectorId")
             connector_status = payload.get("connectorStatus") or payload.get("status")
             if connector_status is None:
                 self._logger.warning(f"Missing 'connectorStatus' in StatusNotification payload: {payload!r} (cp_id={cp_id})")

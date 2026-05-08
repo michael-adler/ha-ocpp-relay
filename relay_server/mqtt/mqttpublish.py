@@ -177,17 +177,6 @@ class MQTTPublisher:
         """Build state topic for a sensor payload."""
         return f"ocpp/{data.cp_id}/{data.topic}/state"
 
-    @staticmethod
-    def _strip_ocpp_prefix(name: str) -> str:
-        """Strip the leading 'OCPP ' prefix from a sensor name.
-
-        The parser adds this prefix so that HA native sensors are clearly
-        labelled within the Home Assistant device registry.  For MQTT
-        discovery the device grouping already provides that context, so the
-        prefix is redundant.
-        """
-        return name.removeprefix("OCPP ")
-
     def _mqtt_discover(self, data: SensorData):
         """Publish Home Assistant discovery message for one sensor."""
         state_topic = self._mqtt_state_topic(data)
@@ -211,7 +200,7 @@ class MQTTPublisher:
                 f"{data.unique_id}_value": {
                     "platform": "sensor",
                     "unique_id": f"{data.unique_id}_value",
-                    "name": self._strip_ocpp_prefix(data.name),
+                    "name": data.name,
                     "state_topic": state_topic,
                     "qos": 1,
                     "expire_after": 0,
