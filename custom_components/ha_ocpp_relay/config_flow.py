@@ -57,7 +57,6 @@ def _details_schema(defaults: dict, is_local: bool) -> vol.Schema:
         fields[vol.Required(CONF_RELAY_SNOOP_PORT, default=defaults[CONF_RELAY_SNOOP_PORT])] = int
         fields[vol.Required(CONF_CPMS_URL, default=defaults[CONF_CPMS_URL])] = str
     else:
-        fields[vol.Optional(CONF_CPMS_URL, default=defaults[CONF_CPMS_URL])] = str
         fields[vol.Required(CONF_SNOOP_SOCKET, default=defaults[CONF_SNOOP_SOCKET])] = str
 
     return vol.Schema(fields)
