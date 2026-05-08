@@ -379,11 +379,7 @@ class OCPPRelay:
                 )
                 return
 
-            # Safe log: json_message may be a dict or other non-list for malformed frames.
-            if isinstance(json_message, list) and len(json_message) > 1:
-                msg_id = json_message[1]
-            else:
-                msg_id = "<non-list frame>"
+            msg_id = json_message[1]
             self._logger.debug(
                 "Relayed message from %s to %s (%s)", source_name, target_name, msg_id
             )

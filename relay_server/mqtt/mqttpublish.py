@@ -73,6 +73,10 @@ class MQTTPublisher:
         while True:
             try:
                 data: SensorData = await asyncio.wait_for(self._queue.get(), timeout=5.0)
+            except asyncio.TimeoutError:
+                continue
+
+            try:
                 self._logger.debug("Publishing %s", data)
 
                 if not self._connected:
@@ -86,9 +90,8 @@ class MQTTPublisher:
                     await asyncio.sleep(2)
 
                 last_msg_info = self._mqtt_publish_data(data)
+            finally:
                 self._queue.task_done()
-            except asyncio.TimeoutError:
-                pass
 
             if self._exit_task and self._queue.empty():
                 break
