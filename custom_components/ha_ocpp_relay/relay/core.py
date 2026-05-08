@@ -117,16 +117,19 @@ class SnoopWebSocketServer:
         """Consume relay events and broadcast them to all snoop clients."""
         while True:
             msg = await self._snoop_queue.get()
-            msg_json = json.dumps(asdict(msg))
-            # Iterate over a snapshot so disconnected sockets can be removed safely.
-            async with self._snoop_sockets_lock:
-                sockets = list(self._snoop_sockets)
-            for ws in sockets:
-                try:
-                    await ws.send(msg_json)
-                except Exception as err:  # noqa: BLE001
-                    self._logger.warning("Error sending to snoop client: %s", err)
-                    await self._drop_socket(ws, close=True)
+            try:
+                msg_json = json.dumps(asdict(msg))
+                # Iterate over a snapshot so disconnected sockets can be removed safely.
+                async with self._snoop_sockets_lock:
+                    sockets = list(self._snoop_sockets)
+                for ws in sockets:
+                    try:
+                        await ws.send(msg_json)
+                    except Exception as err:  # noqa: BLE001
+                        self._logger.warning("Error sending to snoop client: %s", err)
+                        await self._drop_socket(ws, close=True)
+            finally:
+                self._snoop_queue.task_done()
 
     async def _on_connect(self, ws) -> None:
         """Track one snoop client connection until it disconnects."""
@@ -226,7 +229,7 @@ class OCPPRelay:
 
         if not ws_subprotocol:
             self._logger.error("Client did not specify OCPP sub-protocol. Closing connection.")
-            await cp_ws.close()
+            await cp_ws.close(code=4001, reason="missing OCPP sub-protocol")
             return
 
         self._logger.info(
