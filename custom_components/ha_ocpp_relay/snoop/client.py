@@ -74,6 +74,10 @@ class OCPPSnoopClient:
             try:
                 async with websockets.connect(self._snoop_socket) as websocket:
                     has_connected_once = True
+                    # Flush stale sensor state from the previous connection so
+                    # that CPs which do not reconnect go unavailable, and CPs
+                    # that do reconnect start from a clean slate.
+                    self._sensors.clear()
                     async for message in websocket:
                         await self._handle_message(message)
             except asyncio.CancelledError:
@@ -96,12 +100,28 @@ class OCPPSnoopClient:
             self._logger.debug("Skipping invalid JSON message")
             return
 
+        if isinstance(data, dict) and data.get("event") == "Disconnection":
+            cp_id = data.get("cp_id") or "unknown"
+            self._remove_cp_sensors(cp_id)
+
         sensors = self._filter.filter(data)
         if not sensors:
             return
 
         for sensor in sensors:
             self._update_sensor(sensor)
+
+    def _remove_cp_sensors(self, cp_id: str) -> None:
+        """Remove all cached sensor entries for a disconnected charge point.
+
+        This prevents unbounded growth of _sensors when many different CP IDs
+        connect and disconnect over time.  Sensors whose entities use
+        RestoreEntity (vendor, firmware, energy) will continue to show their
+        last value from HA state storage; all others will become unavailable.
+        """
+        stale = [uid for uid, s in self._sensors.items() if s.cp_id == cp_id]
+        for uid in stale:
+            del self._sensors[uid]
 
     def _update_sensor(self, sensor: OCPPSensorData) -> None:
         """Store sensor state and notify entity creation/update listeners."""
