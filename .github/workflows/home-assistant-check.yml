@@ -30,18 +30,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install homeassistant pytest websockets pytest-homeassistant-custom-component
+          pip install -e .
 
       # Optionally, run tests if you have them
       - name: Run tests (allow no tests, show live output)
         run: |
           # Exclude CLI integration tests (marked with @pytest.mark.cli)
-          # Run the single HA test file with -s so prints appear immediately and
-          # fail fast on first failure; fallback to full run if that file is absent.
-          if [ -f tests/test_ha_snoop_playback.py ]; then
-            pytest -s tests/test_ha_snoop_playback.py -m 'not cli' --maxfail=1 || if [ $? -eq 5 ]; then echo "No tests collected, ignoring."; else exit $?; fi
-          else
-            pytest -s -m 'not cli' --maxfail=1 || if [ $? -eq 5 ]; then echo "No tests collected, ignoring."; else exit $?; fi
-          fi
+          pytest -s tests/ -m 'not cli' --maxfail=1 || if [ $? -eq 5 ]; then echo "No tests collected, ignoring."; else exit $?; fi
 
       # Optionally, validate manifest.json (basic check)
       - name: Validate manifest.json
