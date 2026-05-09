@@ -9,6 +9,7 @@ from dataclasses import asdict
 import json
 import logging
 import ssl
+import uuid
 import weakref
 from urllib.parse import urlsplit, urlunsplit
 
@@ -180,6 +181,11 @@ class OCPPRelay:
         self._csms_pass = csms_pass
         self._snoop_queue = snoop_queue
         self._csms_ssl_context = csms_ssl_context
+        # Per-CP state for TriggerMessage-based sensor initialization.
+        # pending_ids: TriggerMessage unique-ids sent by relay, not yet acknowledged.
+        # awaiting: True after Accepted, until the next MeterValues is captured.
+        self._trigger_state: dict[str, dict] = {}
+        self._background_tasks: set[asyncio.Task] = set()
 
     def _put_snoop(self, msg: MessageData) -> None:
         """Put a message on the snoop queue, logging if the queue is full."""
@@ -204,6 +210,80 @@ class OCPPRelay:
         server = await websockets.serve(self._on_connect, host, port, ssl=ssl_context, reuse_address=True)
         self._logger.info("Relay server started on %s:%s", host, port)
         return server
+
+    async def _send_trigger_message(self, cp_ws, cp_id: str) -> None:
+        """Send a TriggerMessage for MeterValues to the CP to initialize sensors."""
+        msg_id = f"relay-trigger-{uuid.uuid4().hex}"
+        state = self._trigger_state.setdefault(cp_id, {"pending_ids": set(), "awaiting": False})
+        state["pending_ids"].add(msg_id)
+        payload = json.dumps([2, msg_id, "TriggerMessage", {"requestedMessage": "MeterValues"}])
+        try:
+            await cp_ws.send(payload)
+            self._logger.debug("Sent TriggerMessage to CP %s (id=%s)", cp_id, msg_id)
+        except Exception as err:  # noqa: BLE001
+            state["pending_ids"].discard(msg_id)
+            self._logger.warning("Failed to send TriggerMessage to CP %s: %s", cp_id, err)
+
+    def _process_cp_to_cpms_frame(self, json_message: list, cp_id: str, cp_ws) -> tuple[bool, bool]:
+        """Observe every CP→CSMS frame to drive sensor initialization via TriggerMessage.
+
+        The relay reads this stream (rather than injecting a separate listener) because
+        it is the only place where all CP-originated frames pass in order, making it safe
+        to correlate requests and responses without races or extra buffering.
+
+        Returns (should_forward, should_snoop).
+        """
+        msg_type = json_message[0]
+        msg_id = json_message[1]
+        state = self._trigger_state.get(cp_id)
+
+        # BootNotification signals that the CP is ready to accept management commands.
+        # We use it as the trigger point because it is the earliest reliable moment: the
+        # CP has registered, so TriggerMessage is valid, but no charging session has
+        # started yet that might interleave its own MeterValues with ours.
+        if msg_type == 2 and len(json_message) >= 3 and json_message[2] == "BootNotification":
+            task = asyncio.create_task(self._send_trigger_message(cp_ws, cp_id))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+
+        # The relay sends TriggerMessage under its own message IDs, which the CPMS has
+        # never seen.  When the CP replies with a CallResult [3, id, …] for one of those
+        # IDs, forwarding it to the CPMS would confuse it (a response to a request it
+        # never issued).  Drop the CallResult unconditionally; if the status is Accepted
+        # we arm the awaiting flag so the next MeterValues can be captured.
+        if msg_type == 3 and state is not None and msg_id in state["pending_ids"]:
+            state["pending_ids"].discard(msg_id)
+            result = json_message[2] if len(json_message) >= 3 else {}
+            if isinstance(result, dict) and result.get("status") == "Accepted":
+                state["awaiting"] = True
+                self._logger.debug(
+                    "TriggerMessage accepted by CP %s; will capture next MeterValues", cp_id
+                )
+            else:
+                self._logger.debug(
+                    "TriggerMessage not accepted by CP %s (result=%r)", cp_id, result
+                )
+            return False, False
+
+        # The CP sends MeterValues in response to TriggerMessage without any link back
+        # to the trigger's message ID, so we can only identify it by position: it is the
+        # next MeterValues after an Accepted response.  We put it on the snoop queue so
+        # the HA sensor platform can initialize from it, but we do not forward it to the
+        # CPMS — the CPMS did not request it and would treat it as unsolicited noise.
+        if (
+            msg_type == 2
+            and len(json_message) >= 3
+            and state is not None
+            and state.get("awaiting")
+            and json_message[2] == "MeterValues"
+        ):
+            state["awaiting"] = False
+            self._logger.debug(
+                "Captured triggered MeterValues from CP %s; snooping but not forwarding", cp_id
+            )
+            return False, True
+
+        return True, True
 
     async def _on_connect(self, cp_ws) -> None:
         """Bridge one charge point connection to the configured CSMS peer."""
@@ -277,6 +357,7 @@ class OCPPRelay:
                             target_name="CSMS",
                             cp_id=charge_point_id,
                             protocol=ws_subprotocol,
+                            trigger_cp_ws=cp_ws,
                         )
                     ),
                     asyncio.create_task(
@@ -316,6 +397,7 @@ class OCPPRelay:
                 "Unexpected error in relay for charge point %s: %s", charge_point_id, err
             )
         finally:
+            self._trigger_state.pop(charge_point_id, None)
             self._logger.info("Charge point disconnected: %s", charge_point_id)
             self._put_snoop(
                 MessageData(
@@ -336,8 +418,13 @@ class OCPPRelay:
         target_name: str,
         cp_id: str,
         protocol: str,
+        trigger_cp_ws=None,
     ) -> None:
-        """Forward frames one direction and optionally mirror them to snoop."""
+        """Forward frames one direction and optionally mirror them to snoop.
+
+        When trigger_cp_ws is set (CP→CSMS direction), TriggerMessage injection
+        and MeterValues interception are active for sensor initialization.
+        """
         _warn_count = 0
         _WARN_LIMIT = 100
         while True:
@@ -371,26 +458,35 @@ class OCPPRelay:
                     _warn_count += 1
                 continue
 
-            try:
-                await target_ws.send(message)
-            except websockets.exceptions.ConnectionClosed:
-                self._logger.info(
-                    "Connection closed on %s side while relaying for CP %s", target_name, cp_id
+            should_forward = True
+            should_snoop = True
+            if trigger_cp_ws is not None:
+                should_forward, should_snoop = self._process_cp_to_cpms_frame(
+                    json_message, cp_id, trigger_cp_ws
                 )
-                return
+
+            if should_forward:
+                try:
+                    await target_ws.send(message)
+                except websockets.exceptions.ConnectionClosed:
+                    self._logger.info(
+                        "Connection closed on %s side while relaying for CP %s", target_name, cp_id
+                    )
+                    return
 
             msg_id = json_message[1]
             self._logger.debug(
                 "Relayed message from %s to %s (%s)", source_name, target_name, msg_id
             )
 
-            # Use _put_snoop() to handle QueueFull gracefully.
-            self._put_snoop(
-                MessageData(
-                    event="Message",
-                    sender=source_name,
-                    protocol=protocol,
-                    cp_id=cp_id,
-                    payload=json_message,
+            if should_snoop:
+                # Use _put_snoop() to handle QueueFull gracefully.
+                self._put_snoop(
+                    MessageData(
+                        event="Message",
+                        sender=source_name,
+                        protocol=protocol,
+                        cp_id=cp_id,
+                        payload=json_message,
+                    )
                 )
-            )
