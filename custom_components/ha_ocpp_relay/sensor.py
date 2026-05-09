@@ -107,8 +107,8 @@ async def async_setup_entry(
     # client.sensors (CP connected and sending) or preserved in the entity registry
     # from a previous run.  On a cold start with no prior registry entries and a CP
     # that hasn't spoken yet, this loop is a no-op: the relay will send TriggerMessage
-    # to the CP immediately after its BootNotification and the resulting MeterValues
-    # will arrive on the snoop queue, triggering SIGNAL_NEW_SENSOR to create entities.
+    # to the CP on its first StatusNotification and the resulting MeterValues will
+    # arrive on the snoop queue, triggering SIGNAL_NEW_SENSOR to create entities.
     for unique_id in sorted(set(client.sensors.keys()) | set(registry_entries.keys())):
         add_entity(unique_id)
 
@@ -199,7 +199,7 @@ class OCPPSensorEntity(SensorEntity, RestoreEntity):
 
         # Restore last state for sensors that should survive temporary source gaps.
         # This covers the window between HA startup and the relay receiving the CP's
-        # BootNotification, sending TriggerMessage, and capturing the MeterValues
+        # first StatusNotification, sending TriggerMessage, and capturing the MeterValues
         # response — during which live values are not yet available.
         last_state = await self.async_get_last_state()
         if last_state is None:

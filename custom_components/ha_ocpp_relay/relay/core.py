@@ -214,7 +214,7 @@ class OCPPRelay:
     async def _send_trigger_message(self, cp_ws, cp_id: str) -> None:
         """Send a TriggerMessage for MeterValues to the CP to initialize sensors."""
         msg_id = f"relay-trigger-{uuid.uuid4().hex}"
-        state = self._trigger_state.setdefault(cp_id, {"pending_ids": set(), "awaiting": False})
+        state = self._trigger_state.setdefault(cp_id, {"pending_ids": set(), "awaiting": False, "triggered": False})
         state["pending_ids"].add(msg_id)
         payload = json.dumps([2, msg_id, "TriggerMessage", {"requestedMessage": "MeterValues"}])
         try:
@@ -237,14 +237,20 @@ class OCPPRelay:
         msg_id = json_message[1]
         state = self._trigger_state.get(cp_id)
 
-        # BootNotification signals that the CP is ready to accept management commands.
-        # We use it as the trigger point because it is the earliest reliable moment: the
-        # CP has registered, so TriggerMessage is valid, but no charging session has
-        # started yet that might interleave its own MeterValues with ours.
-        if msg_type == 2 and len(json_message) >= 3 and json_message[2] == "BootNotification":
-            task = asyncio.create_task(self._send_trigger_message(cp_ws, cp_id))
-            self._background_tasks.add(task)
-            task.add_done_callback(self._background_tasks.discard)
+        # StatusNotification is a more reliable trigger point than BootNotification:
+        # the CP has completed its boot sequence and reported connector state, so it
+        # is ready to respond to TriggerMessage.  We fire only on the first
+        # StatusNotification per connection; subsequent ones (for other connectors or
+        # state changes) are ignored so we don't stack up redundant triggers.
+        if msg_type == 2 and len(json_message) >= 3 and json_message[2] == "StatusNotification":
+            state = self._trigger_state.setdefault(
+                cp_id, {"pending_ids": set(), "awaiting": False, "triggered": False}
+            )
+            if not state["triggered"]:
+                state["triggered"] = True
+                task = asyncio.create_task(self._send_trigger_message(cp_ws, cp_id))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
 
         # The relay sends TriggerMessage under its own message IDs, which the CPMS has
         # never seen.  When the CP replies with a CallResult [3, id, …] for one of those

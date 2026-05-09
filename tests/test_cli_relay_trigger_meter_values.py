@@ -1,10 +1,11 @@
 """Tests for relay-initiated TriggerMessage / MeterValues interception.
 
-The relay sends TriggerMessage to the CP after BootNotification to initialize
-sensors.  It must:
+The relay sends TriggerMessage to the CP on the first StatusNotification to
+initialize sensors.  It must:
+  - fire only once per connection, not on every StatusNotification
   - not forward the TriggerMessage Accepted CallResult to the CPMS
   - not forward the next MeterValues from the CP to the CPMS
-  - still put that MeterValues on the snoop queue
+  - still deliver that MeterValues to snoop subscribers
   - clear trigger state on CP disconnect so a reconnect starts fresh
 """
 
@@ -79,27 +80,51 @@ async def relay_harness():
     await cpms_server.wait_closed()
 
 
+STATUS_NOTIFICATION = [2, "sn-1", "StatusNotification", {"connectorId": 1, "status": "Available", "errorCode": "NoError"}]
+
+
 @pytest.mark.asyncio
-async def test_trigger_sent_after_boot_notification(relay_harness):
-    """After BootNotification the relay sends TriggerMessage to the CP."""
+async def test_trigger_sent_after_first_status_notification(relay_harness):
+    """The relay sends TriggerMessage to the CP on the first StatusNotification."""
     h = relay_harness
-    cp_port = h["cp_port"]
     cpms_ready = h["cpms_ready"]
 
     async with websockets.connect(
-        f"ws://{LOCALHOST}:{cp_port}/CP-01",
+        f"ws://{LOCALHOST}:{h['cp_port']}/CP-01",
         subprotocols=[OCPP_SUBPROTOCOL],
     ) as cp_ws:
         await asyncio.wait_for(cpms_ready.wait(), timeout=3.0)
+        await cp_ws.send(json.dumps(STATUS_NOTIFICATION))
 
-        boot = [2, "boot-1", "BootNotification", {"chargePointVendor": "Acme", "chargePointModel": "X1"}]
-        await cp_ws.send(json.dumps(boot))
-
-        # The relay should send a TriggerMessage to the CP.
         trigger = await _recv_json(cp_ws)
         assert trigger[0] == 2
         assert trigger[2] == "TriggerMessage"
         assert trigger[3].get("requestedMessage") == "MeterValues"
+
+
+@pytest.mark.asyncio
+async def test_trigger_sent_only_once_per_connection(relay_harness):
+    """Subsequent StatusNotification frames must not cause additional TriggerMessages."""
+    h = relay_harness
+    cpms_ready = h["cpms_ready"]
+
+    async with websockets.connect(
+        f"ws://{LOCALHOST}:{h['cp_port']}/CP-01",
+        subprotocols=[OCPP_SUBPROTOCOL],
+    ) as cp_ws:
+        await asyncio.wait_for(cpms_ready.wait(), timeout=3.0)
+
+        # First StatusNotification — expect a TriggerMessage.
+        await cp_ws.send(json.dumps(STATUS_NOTIFICATION))
+        trigger = await _recv_json(cp_ws)
+        assert trigger[2] == "TriggerMessage"
+
+        # Second StatusNotification — must not produce another TriggerMessage.
+        sn2 = [2, "sn-2", "StatusNotification", {"connectorId": 2, "status": "Available", "errorCode": "NoError"}]
+        await cp_ws.send(json.dumps(sn2))
+
+        with pytest.raises(asyncio.TimeoutError):
+            await _recv_json(cp_ws, timeout=0.3)
 
 
 @pytest.mark.asyncio
@@ -114,21 +139,17 @@ async def test_trigger_accepted_not_forwarded_to_cpms(relay_harness):
         subprotocols=[OCPP_SUBPROTOCOL],
     ) as cp_ws:
         await asyncio.wait_for(cpms_ready.wait(), timeout=3.0)
-
-        boot = [2, "boot-1", "BootNotification", {"chargePointVendor": "Acme", "chargePointModel": "X1"}]
-        await cp_ws.send(json.dumps(boot))
+        await cp_ws.send(json.dumps(STATUS_NOTIFICATION))
 
         trigger = await _recv_json(cp_ws)
         trigger_id = trigger[1]
 
         # Reply Accepted — the relay must swallow this.
-        accepted = [3, trigger_id, {"status": "Accepted"}]
-        await cp_ws.send(json.dumps(accepted))
+        await cp_ws.send(json.dumps([3, trigger_id, {"status": "Accepted"}]))
 
-        # Give relay a moment to process.
         await asyncio.sleep(0.1)
 
-        # Only the BootNotification should have reached the CPMS, not the Accepted.
+        # The StatusNotification should have reached the CPMS, but not the Accepted.
         assert all(frame[1] != trigger_id for frame in cpms_received), (
             f"TriggerMessage CallResult leaked to CPMS: {cpms_received}"
         )
@@ -175,9 +196,7 @@ async def test_meter_values_snooped_not_forwarded(relay_harness):
         snoop_task = asyncio.create_task(collect_snoop())
 
         await asyncio.wait_for(cpms_ready.wait(), timeout=3.0)
-
-        boot = [2, "boot-1", "BootNotification", {"chargePointVendor": "Acme", "chargePointModel": "X1"}]
-        await cp_ws.send(json.dumps(boot))
+        await cp_ws.send(json.dumps(STATUS_NOTIFICATION))
 
         trigger = await _recv_json(cp_ws)
         await cp_ws.send(json.dumps([3, trigger[1], {"status": "Accepted"}]))
@@ -207,14 +226,10 @@ async def test_subsequent_meter_values_forwarded(relay_harness):
         subprotocols=[OCPP_SUBPROTOCOL],
     ) as cp_ws:
         await asyncio.wait_for(cpms_ready.wait(), timeout=3.0)
-
-        boot = [2, "boot-1", "BootNotification", {"chargePointVendor": "Acme", "chargePointModel": "X1"}]
-        await cp_ws.send(json.dumps(boot))
+        await cp_ws.send(json.dumps(STATUS_NOTIFICATION))
 
         trigger = await _recv_json(cp_ws)
-        trigger_id = trigger[1]
-
-        await cp_ws.send(json.dumps([3, trigger_id, {"status": "Accepted"}]))
+        await cp_ws.send(json.dumps([3, trigger[1], {"status": "Accepted"}]))
 
         # First MeterValues — captured by relay.
         mv1 = [2, "mv-1", "MeterValues", {"connectorId": 1, "meterValue": []}]
@@ -242,13 +257,11 @@ async def test_trigger_state_cleared_on_disconnect(relay_harness):
         subprotocols=[OCPP_SUBPROTOCOL],
     ) as cp_ws:
         await asyncio.wait_for(cpms_ready.wait(), timeout=3.0)
-
-        boot = [2, "boot-1", "BootNotification", {"chargePointVendor": "Acme", "chargePointModel": "X1"}]
-        await cp_ws.send(json.dumps(boot))
+        await cp_ws.send(json.dumps(STATUS_NOTIFICATION))
 
         trigger1 = await _recv_json(cp_ws)
         assert trigger1[2] == "TriggerMessage"
-        # Don't reply — disconnect with awaiting state potentially set.
+        # Don't reply — disconnect with triggered and awaiting state set.
 
     # Give relay time to process the disconnect.
     await asyncio.sleep(0.1)
@@ -260,9 +273,7 @@ async def test_trigger_state_cleared_on_disconnect(relay_harness):
         subprotocols=[OCPP_SUBPROTOCOL],
     ) as cp_ws:
         await asyncio.wait_for(cpms_ready.wait(), timeout=3.0)
-
-        boot = [2, "boot-2", "BootNotification", {"chargePointVendor": "Acme", "chargePointModel": "X1"}]
-        await cp_ws.send(json.dumps(boot))
+        await cp_ws.send(json.dumps(STATUS_NOTIFICATION))
 
         trigger2 = await _recv_json(cp_ws)
         assert trigger2[2] == "TriggerMessage"
