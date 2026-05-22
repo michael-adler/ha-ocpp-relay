@@ -102,12 +102,13 @@ ocpp-relay-server \
 	or protect it with host firewall, VPN, and/or reverse proxy controls.
 - Direct your EV charger to the websocket relay port on the relay host (default 8500).
 
-## External MQTT helper scripts
+## External helper scripts
 
-The package also includes two external CLI scripts. These share some of the library code but are not used when local relay is enabled.
+The package also includes external CLI scripts. These share some of the library code but are not used when local relay is enabled.
 
 - `ocpp-snoop2mqtt`: subscribes to the relay snoop websocket and publishes mapped telemetry to MQTT.
 - `ocpp-snoop-recorder`: records the raw snoop websocket JSON stream to a file for later replay or analysis.
+- `ocpp-snoop2another-csms`: forwards CP traffic from the snoop port to a secondary CSMS.
 
 `ocpp-snoop2mqtt` is included for deployments where both the relay and MQTT client are run outside Home Assistant.
 
@@ -118,7 +119,22 @@ Example usage:
 ```bash
 ocpp-snoop2mqtt --snoop-socket ws://127.0.0.1:8501/ --mqtt-broker-host localhost
 ocpp-snoop-recorder --snoop-socket ws://127.0.0.1:8501/ --output output.json
+ocpp-snoop2another-csms wss://secondary.example.com/ocpp
 ```
+
+### ocpp-snoop2another-csms
+
+This tool connects to the relay snoop port and opens an independent WebSocket connection to a secondary CSMS for each active charge point. It is read-only on the snoop side and never injects traffic into the primary relay. With this tool it is possible to manage and monitor the CP with one CSMS and monitor the same CP from another CSMS.
+
+The secondary CSMS URL set on the command line is a base to which the CP ID is appended as a path
+component, e.g. `wss://secondary.example.com/ocpp/CP-001`.
+
+Only CALL frames originating from the CP are forwarded. The secondary CSMS may send CALL frames
+such as `GetConfiguration` or `TriggerMessage`. Rather than returning an error,
+most are left unanswered: the CP will send the information to the primary CSMS in
+normal operation, and the secondary CSMS will receive it through the forwarded CP
+traffic. `Heartbeat` CALLs from the secondary CSMS are the exception — they
+receive a synthetic CALLRESULT so the CSMS does not time out.
 
 ## Configuration example
 

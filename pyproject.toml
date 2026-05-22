@@ -26,6 +26,7 @@ ocpp-relay-server = "relay_server.ocpp_relay_server:main"
 ocpp-snoop2mqtt = "relay_server.ocpp_snoop2mqtt:main"
 ocpp-snoop-recorder = "relay_server.debug.snoop_recorder:main"
 ocpp-playback-server = "relay_server.debug.snoop_playback:main"
+ocpp-snoop2another-csms = "relay_server.ocpp_snoop2another_csms:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
