@@ -44,6 +44,10 @@ told the CP to use.  Before the first ``BootNotificationResponse`` is seen, a
 default interval of 5 minutes is used.  The secondary CSMS's CALLRESULT
 responses to these synthetic heartbeats are discarded.
 
+Each ``BootNotification`` CALL forwarded from the CP is also cached locally.
+The cache is cleared when the CP disconnects or the secondary CSMS connection
+is restarted (e.g. on a protocol change).
+
 Responses to secondary CSMS CALLs
 ----------------------------------
 The secondary CSMS may send CALL frames of its own (e.g. ``GetConfiguration``,
@@ -53,13 +57,22 @@ error: the CP will eventually send the requested information to the primary CSMS
 as part of normal operation, and the secondary CSMS should receive it at that
 point via the forwarded CP traffic.
 
-The one exception is ``Heartbeat``: if the secondary CSMS sends a Heartbeat
-CALL, a synthetic CALLRESULT with the current UTC time is returned so that the
-CSMS does not time out waiting for a response.
+There are two exceptions:
+
+``Heartbeat``: a synthetic CALLRESULT with the current UTC time is returned
+immediately so that the CSMS does not time out waiting for a response.
+
+``TriggerMessage(requestedMessage=BootNotification)``: if a cached
+``BootNotification`` is available, the request is accepted (``CALLRESULT``
+with ``status=Accepted``) and the cached frame is immediately re-sent as a
+new CALL with a fresh message ID.  This allows a secondary CSMS that joined
+mid-session to learn the CP's identity without waiting for the CP to reboot.
+If no cached ``BootNotification`` is available the request is left unanswered.
 
 CALLRESULT and CALLERROR frames sent by the secondary CSMS are discarded,
-except for the ``BootNotificationResponse`` which is inspected to extract the
-``heartbeatInterval`` field.
+except for the ``BootNotificationResponse`` (identified by message ID) which
+is inspected to extract the ``heartbeatInterval`` field.  This also covers
+the response to a triggered ``BootNotification``.
 
 Connection lifecycle
 --------------------
@@ -100,6 +113,23 @@ _MSG_CALL = 2
 _MSG_CALLRESULT = 3
 _MSG_CALLERROR = 4
 
+
+def _describe_frame(frame) -> str:
+    """Return a short human-readable label for an OCPP JSON frame."""
+    if not isinstance(frame, list) or len(frame) < 2:
+        return "(malformed)"
+    msg_type = frame[0]
+    raw_id = str(frame[1])
+    short_id = raw_id[:8] if len(raw_id) > 8 else raw_id
+    if msg_type == _MSG_CALL and len(frame) >= 3:
+        return f"CALL {frame[2]} id={short_id}"
+    if msg_type == _MSG_CALLRESULT:
+        return f"CALLRESULT id={short_id}"
+    if msg_type == _MSG_CALLERROR:
+        code = frame[2] if len(frame) > 2 else "?"
+        return f"CALLERROR {code} id={short_id}"
+    return f"type={msg_type} id={short_id}"
+
 _CSMS_RECONNECT_MIN = 1.0     # initial reconnect delay in seconds
 _CSMS_RECONNECT_MAX = 30.0    # maximum reconnect delay in seconds
 _HEARTBEAT_DEFAULT = 300.0    # heartbeat interval until BootNotificationResponse arrives
@@ -117,6 +147,7 @@ class _CPState:
     csms_task: Optional[asyncio.Task] = None
     heartbeat_interval: float = _HEARTBEAT_DEFAULT
     boot_msg_id: Optional[str] = None  # msg_id of the forwarded BootNotification CALL
+    boot_notification: Optional[list] = None  # last CP BootNotification CALL frame
 
 
 class _Forwarder:
@@ -165,10 +196,13 @@ class _Forwarder:
             return
         cp_id = msg.cp_id
         if msg.event == "Connection":
+            self._log.debug("Snoop Connection cp=%s proto=%s", cp_id, msg.protocol)
             await self._on_cp_connect(cp_id, msg.protocol)
         elif msg.event == "Disconnection":
+            self._log.debug("Snoop Disconnection cp=%s", cp_id)
             await self._on_cp_disconnect(cp_id)
         elif msg.event == "Message" and msg.sender == "CP":
+            self._log.debug("Snoop Message cp=%s: %s", cp_id, _describe_frame(msg.payload))
             await self._on_cp_message(cp_id, msg)
 
     # -- CP lifecycle --------------------------------------------------
@@ -222,9 +256,10 @@ class _Forwarder:
         if state.csms_task and not state.csms_task.done():
             try:
                 state.send_queue.put_nowait(json.dumps(payload))
-                self._log.debug("Queued %s from %s", action, cp_id)
+                self._log.debug("Queued %s id=%s from %s", action, payload[1], cp_id)
                 if action == "BootNotification":
                     state.boot_msg_id = payload[1]
+                    state.boot_notification = payload
             except asyncio.QueueFull:
                 self._log.warning("Queue full for %s, dropping %s", cp_id, action)
 
@@ -239,6 +274,7 @@ class _Forwarder:
             state.send_queue.get_nowait()
         state.boot_msg_id = None
         state.heartbeat_interval = _HEARTBEAT_DEFAULT
+        state.boot_notification = None
         state.csms_task = asyncio.create_task(
             self._csms_loop(cp_id), name=f"csms-{cp_id}"
         )
@@ -344,6 +380,10 @@ class _Forwarder:
             return
         while True:
             raw = await state.send_queue.get()
+            try:
+                self._log.debug("→ secondary [%s]: %s", cp_id, _describe_frame(json.loads(raw)))
+            except Exception:
+                pass
             await ws.send(raw)
 
     async def _csms_recv_loop(self, cp_id: str, ws) -> None:
@@ -357,18 +397,22 @@ class _Forwarder:
                 continue
             msg_type = frame[0]
             msg_id = frame[1]
+            self._log.debug("← secondary [%s]: %s", cp_id, _describe_frame(frame))
             if msg_type == _MSG_CALL:
                 action = frame[2] if len(frame) > 2 else ""
-                reply = self._synthesize_response(action, msg_id)
-                if reply is not None:
-                    self._log.debug("CSMS CALL %s for %s, synthesizing response", action, cp_id)
-                    try:
-                        await ws.send(json.dumps(reply))
-                    except Exception as err:
-                        self._log.error("CSMS reply error for %s: %s", cp_id, err)
-                        return
+                if action == "TriggerMessage":
+                    await self._handle_trigger_message(cp_id, msg_id, frame, ws)
                 else:
-                    self._log.debug("CSMS CALL %s for %s, no response (waiting for CP)", action, cp_id)
+                    reply = self._synthesize_response(action, msg_id)
+                    if reply is not None:
+                        self._log.debug("CSMS CALL %s for %s, synthesizing response", action, cp_id)
+                        try:
+                            await ws.send(json.dumps(reply))
+                        except Exception as err:
+                            self._log.error("CSMS reply error for %s: %s", cp_id, err)
+                            return
+                    else:
+                        self._log.debug("CSMS CALL %s for %s, no response (waiting for CP)", action, cp_id)
             elif msg_type == _MSG_CALLRESULT:
                 state = self._cp.get(cp_id)
                 if state and state.boot_msg_id == msg_id and len(frame) >= 3 and isinstance(frame[2], dict):
@@ -384,6 +428,40 @@ class _Forwarder:
                     self._log.debug("CSMS CALLRESULT for %s (discarded)", cp_id)
             elif msg_type == _MSG_CALLERROR:
                 self._log.debug("CSMS CALLERROR for %s (discarded)", cp_id)
+
+    async def _handle_trigger_message(self, cp_id: str, msg_id: str, frame: list, ws) -> None:
+        """Handle a TriggerMessage CALL from the secondary CSMS.
+
+        TriggerMessage(BootNotification): if a cached BootNotification is available,
+        accept the request and re-send it with a fresh message ID.  All other
+        requestedMessage values are left unanswered (the CP will eventually send
+        the requested data to the primary CSMS and it will be forwarded here).
+        """
+        payload = frame[3] if len(frame) > 3 else {}
+        requested = payload.get("requestedMessage") if isinstance(payload, dict) else None
+        if requested != "BootNotification":
+            self._log.debug("CSMS CALL TriggerMessage(%s) for %s, no response (waiting for CP)", requested, cp_id)
+            return
+        state = self._cp.get(cp_id)
+        if state is None or state.boot_notification is None:
+            self._log.debug(
+                "CSMS TriggerMessage(BootNotification) for %s: no cached notification, leaving unanswered", cp_id
+            )
+            return
+        try:
+            await ws.send(json.dumps([_MSG_CALLRESULT, msg_id, {"status": "Accepted"}]))
+        except Exception as err:
+            self._log.error("CSMS reply error for %s: %s", cp_id, err)
+            return
+        new_id = str(uuid.uuid4())
+        boot_frame = list(state.boot_notification)
+        boot_frame[1] = new_id
+        state.boot_msg_id = new_id
+        try:
+            state.send_queue.put_nowait(json.dumps(boot_frame))
+            self._log.debug("Queued triggered BootNotification for %s id=%s", cp_id, new_id)
+        except asyncio.QueueFull:
+            self._log.warning("Queue full for %s, dropping triggered BootNotification", cp_id)
 
     @staticmethod
     def _synthesize_response(action: str, msg_id: str) -> list | None:

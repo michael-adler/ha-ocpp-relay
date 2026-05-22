@@ -59,12 +59,19 @@ async def _close_ws(ws, *, timeout: float = 1.0) -> None:
 class SnoopWebSocketServer:
     """Forward all snoop queue messages to each connected client."""
 
-    def __init__(self, snoop_queue: asyncio.Queue) -> None:
-        """Bind a message queue to a fanout websocket endpoint."""
+    def __init__(self, snoop_queue: asyncio.Queue, cp_packet_cache: dict | None = None) -> None:
+        """Bind a message queue to a fanout websocket endpoint.
+
+        cp_packet_cache, if supplied, should be the OCPPRelay._cp_packet_cache dict.
+        It is a two-level mapping: cp_id → {action → MessageData}.  When a new snoop
+        client connects, every cached packet for every active CP is replayed immediately
+        so the client does not miss events that occurred before it connected.
+        """
         if snoop_queue is None:
             raise ValueError("snoop_queue must be set")
         self._logger = logging.getLogger(__name__)
         self._snoop_queue = snoop_queue
+        self._cp_packet_cache: dict = cp_packet_cache if cp_packet_cache is not None else {}
         self._snoop_sockets: set = set()
         self._closing_sockets: weakref.WeakSet = weakref.WeakSet()
         self._closed_sockets: weakref.WeakSet = weakref.WeakSet()
@@ -139,6 +146,14 @@ class SnoopWebSocketServer:
             self._snoop_sockets.add(ws)
             # Defensive cleanup when object ids are re-used in tests.
             self._closed_sockets.discard(ws)
+        # Replay all cached packets for active CPs so the client does not miss
+        # events that occurred before it connected.
+        try:
+            for per_cp in list(self._cp_packet_cache.values()):
+                for msg in per_cp.values():
+                    await ws.send(json.dumps(asdict(msg)))
+        except Exception:  # noqa: BLE001
+            pass
         try:
             while True:
                 await ws.recv()
@@ -186,6 +201,9 @@ class OCPPRelay:
         # awaiting: True after Accepted, until the next MeterValues is captured.
         self._trigger_state: dict[str, dict] = {}
         self._background_tasks: set[asyncio.Task] = set()
+        # Per-CP packet cache: cp_id → {action → MessageData snoop event}.
+        # Cleared per-CP on disconnect; replayed to snoop clients that connect mid-session.
+        self._cp_packet_cache: dict[str, dict[str, MessageData]] = {}
 
     def _put_snoop(self, msg: MessageData) -> None:
         """Put a message on the snoop queue, logging if the queue is full."""
@@ -404,6 +422,7 @@ class OCPPRelay:
             )
         finally:
             self._trigger_state.pop(charge_point_id, None)
+            self._cp_packet_cache.pop(charge_point_id, None)
             self._logger.info("Charge point disconnected: %s", charge_point_id)
             self._put_snoop(
                 MessageData(
@@ -467,6 +486,18 @@ class OCPPRelay:
             should_forward = True
             should_snoop = True
             if trigger_cp_ws is not None:
+                if (
+                    json_message[0] == 2
+                    and len(json_message) >= 3
+                    and json_message[2] == "BootNotification"
+                ):
+                    self._cp_packet_cache.setdefault(cp_id, {})["BootNotification"] = MessageData(
+                        event="Message",
+                        sender="CP",
+                        protocol=protocol,
+                        cp_id=cp_id,
+                        payload=json_message,
+                    )
                 should_forward, should_snoop = self._process_cp_to_cpms_frame(
                     json_message, cp_id, trigger_cp_ws
                 )

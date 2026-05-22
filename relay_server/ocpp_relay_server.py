@@ -140,7 +140,7 @@ async def core(args):
     relay = OCPPRelay(args.cpms, snoop_queue=msg_queue, csms_ssl_context=csms_ssl_context)
     relay_server = await relay.start(args.ocpp_host, args.ocpp_port, ssl_context=ssl_context)
 
-    snoop = SnoopWebSocketServer(snoop_queue=msg_queue)
+    snoop = SnoopWebSocketServer(snoop_queue=msg_queue, cp_packet_cache=relay._cp_packet_cache)
     snoop_server = await snoop.start(
         args.snoop_host,
         args.snoop_port,

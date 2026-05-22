@@ -63,7 +63,7 @@ class LocalRelaySupervisor:
                     self._config[CONF_RELAY_OCPP_PORT],
                 )
 
-                snoop_ws_server = SnoopWebSocketServer(snoop_queue=msg_queue)
+                snoop_ws_server = SnoopWebSocketServer(snoop_queue=msg_queue, cp_packet_cache=relay._cp_packet_cache)
                 snoop_server = await snoop_ws_server.start(
                     self._config[CONF_RELAY_SNOOP_HOST],
                     self._config[CONF_RELAY_SNOOP_PORT],
