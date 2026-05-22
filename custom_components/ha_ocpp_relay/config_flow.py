@@ -146,8 +146,6 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._defaults.update(self._external_config)
             self._is_local = new_is_local
             self._defaults[CONF_RELAY_IS_LOCAL] = self._is_local
-            if self._is_local:
-                self._defaults[CONF_RELAY_SNOOP_HOST] = DEFAULT_RELAY_SNOOP_HOST
             return await self.async_step_user_details()
 
         return self.async_show_form(
@@ -183,8 +181,6 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._defaults.update(self._external_config)
             self._is_local = new_is_local
             self._defaults[CONF_RELAY_IS_LOCAL] = self._is_local
-            if self._is_local:
-                self._defaults[CONF_RELAY_SNOOP_HOST] = DEFAULT_RELAY_SNOOP_HOST
             return await self.async_step_reconfigure_details()
 
         return self.async_show_form(
@@ -207,8 +203,6 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._defaults.update(self._external_config)
                 self._is_local = new_is_local
                 self._defaults[CONF_RELAY_IS_LOCAL] = self._is_local
-                if self._is_local:
-                    self._defaults[CONF_RELAY_SNOOP_HOST] = DEFAULT_RELAY_SNOOP_HOST
                 return self.async_show_form(
                     **_detail_form("reconfigure_details", self._defaults, self._is_local)
                 )
@@ -259,8 +253,6 @@ class HaOcppRelayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._defaults.update(self._external_config)
                 self._is_local = new_is_local
                 self._defaults[CONF_RELAY_IS_LOCAL] = self._is_local
-                if self._is_local:
-                    self._defaults[CONF_RELAY_SNOOP_HOST] = DEFAULT_RELAY_SNOOP_HOST
                 return self._show_details_form()
 
             config, errors = self._validate_detail_input(user_input)
@@ -333,8 +325,6 @@ class HaOcppRelayOptionsFlow(config_entries.OptionsFlow):
                 self._defaults.update(self._external_config)
             self._is_local = new_is_local
             self._defaults[CONF_RELAY_IS_LOCAL] = self._is_local
-            if self._is_local:
-                self._defaults[CONF_RELAY_SNOOP_HOST] = DEFAULT_RELAY_SNOOP_HOST
             return await self.async_step_details()
 
         return self.async_show_form(
@@ -360,8 +350,6 @@ class HaOcppRelayOptionsFlow(config_entries.OptionsFlow):
                     self._defaults.update(self._external_config)
                 self._is_local = new_is_local
                 self._defaults[CONF_RELAY_IS_LOCAL] = self._is_local
-                if self._is_local:
-                    self._defaults[CONF_RELAY_SNOOP_HOST] = DEFAULT_RELAY_SNOOP_HOST
                 return self._show_details_form()
 
             config, errors = self._validate_detail_input(user_input)
