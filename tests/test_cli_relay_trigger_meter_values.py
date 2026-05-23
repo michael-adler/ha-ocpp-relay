@@ -4,8 +4,8 @@ The relay sends TriggerMessage to the CP on the first StatusNotification to
 initialize sensors.  It must:
   - fire only once per connection, not on every StatusNotification
   - not forward the TriggerMessage Accepted CallResult to the CPMS
-  - not forward the next MeterValues from the CP to the CPMS
-  - still deliver that MeterValues to snoop subscribers
+  - forward the triggered MeterValues to the CPMS so the CSMS can issue CALLRESULT
+  - also deliver that MeterValues to snoop subscribers
   - clear trigger state on CP disconnect so a reconnect starts fresh
 """
 
@@ -71,7 +71,7 @@ async def relay_harness():
         cpms_handler, LOCALHOST, cpms_port, subprotocols=[OCPP_SUBPROTOCOL]
     )
 
-    relay = OCPPRelay(f"ws://{LOCALHOST}:{cpms_port}", snoop_queue=snoop_queue)
+    relay = OCPPRelay(f"ws://{LOCALHOST}:{cpms_port}", snoop_queue=snoop_queue, boot_trigger_deadline=(0.0, 0.05))
     relay_server = await relay.start(LOCALHOST, cp_port)
 
     snoop = SnoopWebSocketServer(snoop_queue=snoop_queue)
@@ -171,8 +171,8 @@ async def test_trigger_accepted_not_forwarded_to_cpms(relay_harness):
 
 
 @pytest.mark.asyncio
-async def test_meter_values_snooped_not_forwarded(relay_harness):
-    """The triggered MeterValues must reach a snoop subscriber but not the CPMS."""
+async def test_meter_values_forwarded_and_snooped(relay_harness):
+    """The triggered MeterValues must reach both the CPMS and a snoop subscriber."""
     h = relay_harness
     cpms_received = h["cpms_received"]
     cpms_ready = h["cpms_ready"]
@@ -224,9 +224,9 @@ async def test_meter_values_snooped_not_forwarded(relay_harness):
         snoop_task.cancel()
         await asyncio.gather(snoop_task, return_exceptions=True)
 
-    # MeterValues must NOT have reached the CPMS.
-    assert all(frame[1] != "mv-1" for frame in cpms_received), (
-        f"Triggered MeterValues leaked to CPMS: {cpms_received}"
+    # MeterValues must have reached the CPMS (CSMS needs it to issue CALLRESULT).
+    assert any(frame[1] == "mv-1" for frame in cpms_received), (
+        f"Triggered MeterValues did not reach CPMS: {cpms_received}"
     )
 
 
@@ -248,18 +248,18 @@ async def test_subsequent_meter_values_forwarded(relay_harness):
         trigger = await _recv_json(cp_ws)
         await cp_ws.send(json.dumps([3, trigger[1], {"status": "Accepted"}]))
 
-        # First MeterValues — captured by relay.
+        # First MeterValues — triggered; forwarded to CPMS (so CSMS can CALLRESULT).
         mv1 = [2, "mv-1", "MeterValues", {"connectorId": 1, "meterValue": []}]
         await cp_ws.send(json.dumps(mv1))
 
-        # Second MeterValues — must pass through to CPMS.
+        # Second MeterValues — normal forwarding continues.
         mv2 = [2, "mv-2", "MeterValues", {"connectorId": 1, "meterValue": []}]
         await cp_ws.send(json.dumps(mv2))
 
         await asyncio.sleep(0.1)
 
-        assert all(frame[1] != "mv-1" for frame in cpms_received), "First MeterValues should be captured"
-        assert any(frame[1] == "mv-2" for frame in cpms_received), "Second MeterValues should be forwarded"
+        assert any(frame[1] == "mv-1" for frame in cpms_received), "Triggered MeterValues should be forwarded"
+        assert any(frame[1] == "mv-2" for frame in cpms_received), "Subsequent MeterValues should be forwarded"
 
 
 @pytest.mark.asyncio

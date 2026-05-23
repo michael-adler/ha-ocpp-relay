@@ -456,9 +456,9 @@ class _Forwarder:
         new_id = str(uuid.uuid4())
         boot_frame = list(state.boot_notification)
         boot_frame[1] = new_id
-        state.boot_msg_id = new_id
         try:
             state.send_queue.put_nowait(json.dumps(boot_frame))
+            state.boot_msg_id = new_id
             self._log.debug("Queued triggered BootNotification for %s id=%s", cp_id, new_id)
         except asyncio.QueueFull:
             self._log.warning("Queue full for %s, dropping triggered BootNotification", cp_id)

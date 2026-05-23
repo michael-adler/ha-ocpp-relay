@@ -40,9 +40,8 @@ async def _recv_json(ws, timeout=3.0):
     return json.loads(raw)
 
 
-@pytest.fixture
-async def relay_harness():
-    """Start OCPPRelay + SnoopWebSocketServer with a shared cp_packet_cache and a fake CPMS."""
+async def _make_harness(boot_trigger_deadline):
+    """Shared setup for relay + snoop + fake CPMS."""
     cp_port = _free_port()
     snoop_port = _free_port()
     snoop_queue = asyncio.Queue()
@@ -62,13 +61,14 @@ async def relay_harness():
         cpms_handler, LOCALHOST, cpms_port, subprotocols=[OCPP_SUBPROTOCOL]
     )
 
-    relay = OCPPRelay(f"ws://{LOCALHOST}:{cpms_port}", snoop_queue=snoop_queue)
+    relay = OCPPRelay(f"ws://{LOCALHOST}:{cpms_port}", snoop_queue=snoop_queue, boot_trigger_deadline=boot_trigger_deadline)
     relay_server = await relay.start(LOCALHOST, cp_port)
 
     snoop = SnoopWebSocketServer(snoop_queue=snoop_queue, cp_packet_cache=relay._cp_packet_cache)
     snoop_server = await snoop.start(LOCALHOST, snoop_port)
 
-    yield {
+    servers = (snoop_server, relay_server, cpms_server)
+    harness = {
         "cp_port": cp_port,
         "snoop_port": snoop_port,
         "relay": relay,
@@ -76,13 +76,29 @@ async def relay_harness():
         "cpms_ready": cpms_ready,
         "cpms_ws_holder": cpms_ws_holder,
     }
+    return harness, servers
 
-    snoop_server.close()
-    await snoop_server.wait_closed()
-    relay_server.close()
-    await relay_server.wait_closed()
-    cpms_server.close()
-    await cpms_server.wait_closed()
+
+async def _teardown_harness(servers):
+    for server in servers:
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.fixture
+async def relay_harness():
+    """Relay with near-zero deadline: trigger fires without polling the cache."""
+    harness, servers = await _make_harness(boot_trigger_deadline=(0.0, 0.05))
+    yield harness
+    await _teardown_harness(servers)
+
+
+@pytest.fixture
+async def relay_harness_polling():
+    """Relay with a fixed 0.1 s deadline so the polling loop actually executes."""
+    harness, servers = await _make_harness(boot_trigger_deadline=(0.1, 0.1))
+    yield harness
+    await _teardown_harness(servers)
 
 
 @pytest.mark.asyncio
@@ -205,3 +221,54 @@ async def test_boot_trigger_state_cleared_on_disconnect(relay_harness):
         assert trigger2[2] == "TriggerMessage"
         assert trigger2[3].get("requestedMessage") == "BootNotification"
         assert trigger2[1] != trigger1[1], "Expected a fresh trigger id on reconnect"
+
+
+@pytest.mark.asyncio
+async def test_boot_trigger_fires_after_deadline(relay_harness_polling):
+    """Trigger fires after the deadline when no spontaneous BootNotification is cached."""
+    h = relay_harness_polling
+
+    async with websockets.connect(
+        f"ws://{LOCALHOST}:{h['cp_port']}/CP-01",
+        subprotocols=[OCPP_SUBPROTOCOL],
+    ) as cp_ws:
+        await asyncio.wait_for(h["cpms_ready"].wait(), timeout=3.0)
+
+        # CP sends nothing; relay must fire the trigger after the 0.1 s deadline.
+        trigger = await _recv_json(cp_ws, timeout=1.0)
+        assert trigger[0] == 2
+        assert trigger[2] == "TriggerMessage"
+        assert trigger[3].get("requestedMessage") == "BootNotification"
+
+
+@pytest.mark.asyncio
+async def test_boot_trigger_skipped_if_spontaneous_boot_cached(relay_harness_polling):
+    """Trigger is suppressed when the CP sends a spontaneous BootNotification before the deadline."""
+    h = relay_harness_polling
+
+    async with websockets.connect(
+        f"ws://{LOCALHOST}:{h['cp_port']}/CP-01",
+        subprotocols=[OCPP_SUBPROTOCOL],
+    ) as cp_ws:
+        await asyncio.wait_for(h["cpms_ready"].wait(), timeout=3.0)
+
+        # CP sends BootNotification immediately; relay caches it before the deadline fires.
+        await cp_ws.send(json.dumps(BOOT_NOTIFICATION))
+
+        # Wait until the relay has forwarded the BootNotification to the CPMS.  The
+        # cache write happens before target_ws.send(), so once the CPMS has the frame
+        # the cache is guaranteed to be populated — regardless of system load.
+        async def cpms_received_boot():
+            while not any(f[2] == "BootNotification" for f in h["cpms_received"]):
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(cpms_received_boot(), timeout=3.0)
+
+        # Now wait for the 0.1 s deadline to have elapsed and the boot trigger task
+        # to have run its cache check.  A brief yield is enough since the cache is
+        # already populated; the task will exit on its next wake-up.
+        await asyncio.sleep(0.2)
+
+        # No TriggerMessage should have been sent to the CP.
+        with pytest.raises(asyncio.TimeoutError):
+            await _recv_json(cp_ws, timeout=0.1)

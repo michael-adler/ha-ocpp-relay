@@ -8,6 +8,7 @@ import contextlib
 from dataclasses import asdict
 import json
 import logging
+import random
 import ssl
 import uuid
 import weakref
@@ -150,7 +151,7 @@ class SnoopWebSocketServer:
         # events that occurred before it connected.
         try:
             for per_cp in list(self._cp_packet_cache.values()):
-                for msg in per_cp.values():
+                for msg in list(per_cp.values()):
                     await ws.send(json.dumps(asdict(msg)))
         except Exception:  # noqa: BLE001
             pass
@@ -174,6 +175,7 @@ class OCPPRelay:
         csms_pass: str | None = None,
         snoop_queue: asyncio.Queue | None = None,
         csms_ssl_context: ssl.SSLContext | None = None,
+        boot_trigger_deadline: tuple[float, float] = (25.0, 35.0),
     ) -> None:
         """Configure CP<->CSMS relay behavior for one server instance.
 
@@ -187,6 +189,11 @@ class OCPPRelay:
                 the default system CA bundle is used (certificate verification
                 enabled).  Pass a custom ``ssl.SSLContext`` to supply a
                 private CA bundle or to adjust protocol/cipher settings.
+            boot_trigger_deadline: ``(min, max)`` seconds to wait for a
+                spontaneous BootNotification before sending
+                TriggerMessage(BootNotification).  A compliant CP sends one
+                immediately; the deadline only matters for non-compliant CPs.
+                Randomised to avoid thundering-herd bursts on reconnect.
         """
         if not csms_url:
             raise ValueError("csms_url must not be empty")
@@ -196,6 +203,7 @@ class OCPPRelay:
         self._csms_pass = csms_pass
         self._snoop_queue = snoop_queue
         self._csms_ssl_context = csms_ssl_context
+        self._boot_trigger_deadline = boot_trigger_deadline
         # Per-CP state for TriggerMessage-based sensor initialization.
         # pending_ids: TriggerMessage unique-ids sent by relay, not yet acknowledged.
         # awaiting: True after Accepted, until the next MeterValues is captured.
@@ -230,16 +238,42 @@ class OCPPRelay:
         return server
 
     async def _send_boot_notification_trigger(self, cp_ws, cp_id: str) -> None:
-        """Send TriggerMessage(BootNotification) to the CP right after the CSMS connects.
+        """Send TriggerMessage(BootNotification) if the CP does not send one spontaneously.
 
-        This ensures the relay captures a BootNotification in _cp_packet_cache for every
-        active CP, even when the CP connected before any snoop client was running.
+        A compliant CP sends BootNotification immediately after connecting; the relay
+        caches it as it passes through and no trigger is needed.  Non-compliant CPs that
+        skip the spontaneous BootNotification are handled by waiting up to a randomised
+        deadline, then triggering one explicitly.
         """
-        msg_id = f"relay-boot-{uuid.uuid4().hex}"
-        state = self._trigger_state.setdefault(
+        # Ensure the state entry exists so _process_cp_to_cpms_frame can handle
+        # the eventual CALLRESULT even before any other trigger fires.
+        self._trigger_state.setdefault(
             cp_id, {"pending_ids": set(), "awaiting": False, "triggered": False, "boot_trigger_ids": set()}
         )
-        state.setdefault("boot_trigger_ids", set()).add(msg_id)
+
+        # Poll until a spontaneous BootNotification is cached, the CP disconnects,
+        # or the deadline expires.  Sleep in ≤0.5 s slices so the loop wakes promptly
+        # at the deadline regardless of its value.
+        deadline = random.uniform(*self._boot_trigger_deadline)
+        elapsed = 0.0
+        while elapsed < deadline:
+            sleep_for = min(0.5, deadline - elapsed)
+            await asyncio.sleep(sleep_for)
+            elapsed += sleep_for
+            if cp_id not in self._trigger_state:
+                return  # CP disconnected while waiting
+            if self._cp_packet_cache.get(cp_id, {}).get("BootNotification") is not None:
+                self._logger.debug(
+                    "BootNotification already cached for CP %s; skipping trigger", cp_id
+                )
+                return
+
+        # Deadline expired with no cached BootNotification — send the trigger.
+        if cp_id not in self._trigger_state:
+            return  # CP disconnected during final check
+        state = self._trigger_state[cp_id]
+        msg_id = f"relay-boot-{uuid.uuid4().hex}"
+        state["boot_trigger_ids"].add(msg_id)
         payload = json.dumps([2, msg_id, "TriggerMessage", {"requestedMessage": "BootNotification"}])
         try:
             await cp_ws.send(payload)
@@ -289,19 +323,19 @@ class OCPPRelay:
                 self._background_tasks.add(task)
                 task.add_done_callback(self._background_tasks.discard)
 
-        # Drop CALLRESULT for the relay-initiated TriggerMessage(BootNotification).  The
-        # CPMS never issued this request so it must not see the response.
-        if msg_type == 3 and state is not None and msg_id in state.get("boot_trigger_ids", set()):
+        # Drop CALLRESULT/CALLERROR for the relay-initiated TriggerMessage(BootNotification).
+        # The CPMS never issued this request so it must not see the response.
+        if msg_type in (3, 4) and state is not None and msg_id in state.get("boot_trigger_ids", set()):
             state["boot_trigger_ids"].discard(msg_id)
-            self._logger.debug("Dropped boot TriggerMessage CallResult from CP %s", cp_id)
+            self._logger.debug("Dropped boot TriggerMessage response from CP %s", cp_id)
             return False, False
 
         # The relay sends TriggerMessage under its own message IDs, which the CPMS has
-        # never seen.  When the CP replies with a CallResult [3, id, …] for one of those
-        # IDs, forwarding it to the CPMS would confuse it (a response to a request it
-        # never issued).  Drop the CallResult unconditionally; if the status is Accepted
-        # we arm the awaiting flag so the next MeterValues can be captured.
-        if msg_type == 3 and state is not None and msg_id in state["pending_ids"]:
+        # never seen.  When the CP replies with a CallResult/CallError [3/4, id, …] for
+        # one of those IDs, forwarding it to the CPMS would confuse it (a response to a
+        # request it never issued).  Drop unconditionally; if CALLRESULT status is
+        # Accepted we arm the awaiting flag so the next MeterValues can be captured.
+        if msg_type in (3, 4) and state is not None and msg_id in state["pending_ids"]:
             state["pending_ids"].discard(msg_id)
             result = json_message[2] if len(json_message) >= 3 else {}
             if isinstance(result, dict) and result.get("status") == "Accepted":
@@ -317,9 +351,9 @@ class OCPPRelay:
 
         # The CP sends MeterValues in response to TriggerMessage without any link back
         # to the trigger's message ID, so we can only identify it by position: it is the
-        # next MeterValues after an Accepted response.  We put it on the snoop queue so
-        # the HA sensor platform can initialize from it, but we do not forward it to the
-        # CPMS — the CPMS did not request it and would treat it as unsolicited noise.
+        # next MeterValues after an Accepted response.  Forward it normally so the CSMS
+        # can issue the required CALLRESULT; dropping it would stall the CP (per OCPP
+        # §3.1, a CP must not send further messages until it receives a CALLRESULT).
         if (
             msg_type == 2
             and len(json_message) >= 3
@@ -329,9 +363,9 @@ class OCPPRelay:
         ):
             state["awaiting"] = False
             self._logger.debug(
-                "Captured triggered MeterValues from CP %s; snooping but not forwarding", cp_id
+                "Captured triggered MeterValues from CP %s; forwarding and snooping", cp_id
             )
-            return False, True
+            return True, True
 
         return True, True
 
@@ -439,11 +473,15 @@ class OCPPRelay:
                     # blocking until the CSMS heartbeat timeout fires.
                     await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                 finally:
-                    # Ensure both loops terminate to avoid orphaned websocket reads.
+                    # Cancel the boot trigger task so it does not outlive this
+                    # connection and cannot pollute a reconnecting CP's state.
+                    if not boot_task.done():
+                        boot_task.cancel()
+                    # Ensure both relay loops and the boot task terminate.
                     for task in tasks:
                         if not task.done():
                             task.cancel()
-                    await asyncio.gather(*tasks, return_exceptions=True)
+                    await asyncio.gather(*tasks, boot_task, return_exceptions=True)
 
                     # Politely close both websockets if still open.
                     for sock in (cp_ws, csms_ws):
@@ -547,9 +585,10 @@ class OCPPRelay:
                     return
 
             msg_id = json_message[1]
-            self._logger.debug(
-                "Relayed message from %s to %s (%s)", source_name, target_name, msg_id
-            )
+            if should_forward:
+                self._logger.debug(
+                    "Relayed message from %s to %s (%s)", source_name, target_name, msg_id
+                )
 
             if should_snoop:
                 # Use _put_snoop() to handle QueueFull gracefully.
