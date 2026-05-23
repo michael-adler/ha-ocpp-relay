@@ -131,10 +131,12 @@ component, e.g. `wss://secondary.example.com/ocpp/CP-001`.
 
 Only CALL frames originating from the CP are forwarded. The secondary CSMS may send CALL frames
 such as `GetConfiguration` or `TriggerMessage`. Rather than returning an error,
-most are left unanswered: the CP will send the information to the primary CSMS in
-normal operation, and the secondary CSMS will receive it through the forwarded CP
-traffic. `Heartbeat` CALLs from the secondary CSMS are the exception — they
-receive a synthetic CALLRESULT so the CSMS does not time out.
+most are left unanswered. Requests for the CP to generate a `BootRequest` and `Heartbeat` CALLs from
+the secondary CSMS are the exception — the script synthesizes both message types
+internally.
+
+Consider this script experimental, especially since the script deliberately drops most CSMS-generated
+requests.
 
 ## Configuration example
 

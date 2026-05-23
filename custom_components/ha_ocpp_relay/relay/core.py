@@ -209,7 +209,8 @@ class OCPPRelay:
         # awaiting: True after Accepted, until the next MeterValues is captured.
         self._trigger_state: dict[str, dict] = {}
         self._background_tasks: set[asyncio.Task] = set()
-        # Per-CP packet cache: cp_id → {action → MessageData snoop event}.
+        # Per-CP packet cache: cp_id → {cache_key → MessageData snoop event}.
+        # Keys: "BootNotification", "StatusNotification:<connectorId>".
         # Cleared per-CP on disconnect; replayed to snoop clients that connect mid-session.
         self._cp_packet_cache: dict[str, dict[str, MessageData]] = {}
 
@@ -565,6 +566,21 @@ class OCPPRelay:
                     and json_message[2] == "BootNotification"
                 ):
                     self._cp_packet_cache.setdefault(cp_id, {})["BootNotification"] = MessageData(
+                        event="Message",
+                        sender="CP",
+                        protocol=protocol,
+                        cp_id=cp_id,
+                        payload=json_message,
+                    )
+                if (
+                    json_message[0] == 2
+                    and len(json_message) >= 4
+                    and json_message[2] == "StatusNotification"
+                    and isinstance(json_message[3], dict)
+                ):
+                    connector_id = json_message[3].get("connectorId", 0)
+                    cache_key = f"StatusNotification:{connector_id}"
+                    self._cp_packet_cache.setdefault(cp_id, {})[cache_key] = MessageData(
                         event="Message",
                         sender="CP",
                         protocol=protocol,
