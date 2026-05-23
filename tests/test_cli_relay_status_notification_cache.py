@@ -172,6 +172,43 @@ async def test_status_notification_replayed_to_late_snoop_client(harness):
 
 
 @pytest.mark.asyncio
+async def test_snoop_replay_order(harness):
+    """Cache replay delivers BootNotification first, then StatusNotifications sorted by connector ID."""
+    h = harness
+    boot = [2, "bn-1", "BootNotification", {"chargePointVendor": "Acme", "chargePointModel": "X1"}]
+    async with websockets.connect(
+        f"ws://{LOCALHOST}:{h['cp_port']}/CP-01", subprotocols=[OCPP_SUBPROTOCOL]
+    ) as cp_ws:
+        await asyncio.wait_for(h["cpms_ready"].wait(), timeout=3.0)
+        # Send StatusNotifications out of order, then a BootNotification.
+        await cp_ws.send(json.dumps(_status_notification("sn-3", connector_id=3, status="Faulted")))
+        await cp_ws.send(json.dumps(_status_notification("sn-1", connector_id=1, status="Charging")))
+        await cp_ws.send(json.dumps(boot))
+        await cp_ws.send(json.dumps(_status_notification("sn-2", connector_id=2, status="Available")))
+        # Let the relay process all frames and _forward_messages drain the queue.
+        await asyncio.sleep(0.1)
+
+        async with websockets.connect(f"ws://{LOCALHOST}:{h['snoop_port']}") as snoop_ws:
+            received = []
+            while True:
+                try:
+                    received.append(await _recv_json(snoop_ws, timeout=0.5))
+                except asyncio.TimeoutError:
+                    break
+
+    # Filter to only the replayed Message frames (excludes any live queue events).
+    messages = [m for m in received if m.get("event") == "Message"]
+    actions = [m["payload"][2] for m in messages]
+    assert actions[0] == "BootNotification"
+    connector_ids = [
+        m["payload"][3]["connectorId"]
+        for m in messages
+        if m["payload"][2] == "StatusNotification"
+    ]
+    assert connector_ids == [1, 2, 3]
+
+
+@pytest.mark.asyncio
 async def test_status_notification_cache_cleared_on_disconnect(harness):
     """All StatusNotification cache entries for a CP are removed on disconnect."""
     h = harness

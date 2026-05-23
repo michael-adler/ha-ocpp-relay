@@ -151,8 +151,17 @@ class SnoopWebSocketServer:
         # events that occurred before it connected.
         try:
             for per_cp in list(self._cp_packet_cache.values()):
-                for msg in list(per_cp.values()):
-                    await ws.send(json.dumps(asdict(msg)))
+                boot = per_cp.get("BootNotification")
+                if boot is not None:
+                    await ws.send(json.dumps(asdict(boot)))
+                for key in sorted(
+                    (k for k in per_cp if k.startswith("StatusNotification:")),
+                    key=lambda k: int(k.split(":")[1]),
+                ):
+                    await ws.send(json.dumps(asdict(per_cp[key])))
+                for key, msg in per_cp.items():
+                    if key != "BootNotification" and not key.startswith("StatusNotification:"):
+                        await ws.send(json.dumps(asdict(msg)))
         except Exception:  # noqa: BLE001
             pass
         try:
