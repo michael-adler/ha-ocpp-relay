@@ -229,10 +229,29 @@ class OCPPRelay:
         self._logger.info("Relay server started on %s:%s", host, port)
         return server
 
+    async def _send_boot_notification_trigger(self, cp_ws, cp_id: str) -> None:
+        """Send TriggerMessage(BootNotification) to the CP right after the CSMS connects.
+
+        This ensures the relay captures a BootNotification in _cp_packet_cache for every
+        active CP, even when the CP connected before any snoop client was running.
+        """
+        msg_id = f"relay-boot-{uuid.uuid4().hex}"
+        state = self._trigger_state.setdefault(
+            cp_id, {"pending_ids": set(), "awaiting": False, "triggered": False, "boot_trigger_ids": set()}
+        )
+        state.setdefault("boot_trigger_ids", set()).add(msg_id)
+        payload = json.dumps([2, msg_id, "TriggerMessage", {"requestedMessage": "BootNotification"}])
+        try:
+            await cp_ws.send(payload)
+            self._logger.debug("Sent TriggerMessage(BootNotification) to CP %s (id=%s)", cp_id, msg_id)
+        except Exception as err:  # noqa: BLE001
+            state["boot_trigger_ids"].discard(msg_id)
+            self._logger.warning("Failed to send TriggerMessage(BootNotification) to CP %s: %s", cp_id, err)
+
     async def _send_trigger_message(self, cp_ws, cp_id: str) -> None:
         """Send a TriggerMessage for MeterValues to the CP to initialize sensors."""
         msg_id = f"relay-trigger-{uuid.uuid4().hex}"
-        state = self._trigger_state.setdefault(cp_id, {"pending_ids": set(), "awaiting": False, "triggered": False})
+        state = self._trigger_state.setdefault(cp_id, {"pending_ids": set(), "awaiting": False, "triggered": False, "boot_trigger_ids": set()})
         state["pending_ids"].add(msg_id)
         payload = json.dumps([2, msg_id, "TriggerMessage", {"requestedMessage": "MeterValues"}])
         try:
@@ -262,13 +281,20 @@ class OCPPRelay:
         # state changes) are ignored so we don't stack up redundant triggers.
         if msg_type == 2 and len(json_message) >= 3 and json_message[2] == "StatusNotification":
             state = self._trigger_state.setdefault(
-                cp_id, {"pending_ids": set(), "awaiting": False, "triggered": False}
+                cp_id, {"pending_ids": set(), "awaiting": False, "triggered": False, "boot_trigger_ids": set()}
             )
             if not state["triggered"]:
                 state["triggered"] = True
                 task = asyncio.create_task(self._send_trigger_message(cp_ws, cp_id))
                 self._background_tasks.add(task)
                 task.add_done_callback(self._background_tasks.discard)
+
+        # Drop CALLRESULT for the relay-initiated TriggerMessage(BootNotification).  The
+        # CPMS never issued this request so it must not see the response.
+        if msg_type == 3 and state is not None and msg_id in state.get("boot_trigger_ids", set()):
+            state["boot_trigger_ids"].discard(msg_id)
+            self._logger.debug("Dropped boot TriggerMessage CallResult from CP %s", cp_id)
+            return False, False
 
         # The relay sends TriggerMessage under its own message IDs, which the CPMS has
         # never seen.  When the CP replies with a CallResult [3, id, …] for one of those
@@ -371,6 +397,15 @@ class OCPPRelay:
                 csms_uri,
                 **connect_kwargs,
             ) as csms_ws:
+                # Trigger BootNotification immediately so _cp_packet_cache is populated
+                # for any snoop client that connects after the CP.  The CALLRESULT will
+                # be intercepted in _process_cp_to_cpms_frame and not forwarded to CSMS.
+                boot_task = asyncio.create_task(
+                    self._send_boot_notification_trigger(cp_ws, charge_point_id)
+                )
+                self._background_tasks.add(boot_task)
+                boot_task.add_done_callback(self._background_tasks.discard)
+
                 # Relay in both directions until either side closes.
                 tasks = [
                     asyncio.create_task(

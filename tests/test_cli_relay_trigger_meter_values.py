@@ -36,6 +36,19 @@ async def _recv_json(ws, timeout=3.0):
     return json.loads(raw)
 
 
+async def _consume_boot_trigger(cp_ws):
+    """Read and discard the relay-initiated TriggerMessage(BootNotification).
+
+    The relay now sends this trigger immediately after the CSMS connection is
+    established, before the CP sends any messages.  Tests that focus on the
+    MeterValues trigger must consume it first so their own recv calls get the
+    expected frames.
+    """
+    msg = await _recv_json(cp_ws)
+    assert msg[0] == 2 and msg[2] == "TriggerMessage"
+    assert msg[3].get("requestedMessage") == "BootNotification"
+
+
 @pytest.fixture
 async def relay_harness():
     """Start an OCPPRelay with a SnoopWebSocketServer and a fake CPMS."""
@@ -94,6 +107,7 @@ async def test_trigger_sent_after_first_status_notification(relay_harness):
         subprotocols=[OCPP_SUBPROTOCOL],
     ) as cp_ws:
         await asyncio.wait_for(cpms_ready.wait(), timeout=3.0)
+        await _consume_boot_trigger(cp_ws)
         await cp_ws.send(json.dumps(STATUS_NOTIFICATION))
 
         trigger = await _recv_json(cp_ws)
@@ -113,6 +127,7 @@ async def test_trigger_sent_only_once_per_connection(relay_harness):
         subprotocols=[OCPP_SUBPROTOCOL],
     ) as cp_ws:
         await asyncio.wait_for(cpms_ready.wait(), timeout=3.0)
+        await _consume_boot_trigger(cp_ws)
 
         # First StatusNotification — expect a TriggerMessage.
         await cp_ws.send(json.dumps(STATUS_NOTIFICATION))
@@ -196,6 +211,7 @@ async def test_meter_values_snooped_not_forwarded(relay_harness):
         snoop_task = asyncio.create_task(collect_snoop())
 
         await asyncio.wait_for(cpms_ready.wait(), timeout=3.0)
+        await _consume_boot_trigger(cp_ws)
         await cp_ws.send(json.dumps(STATUS_NOTIFICATION))
 
         trigger = await _recv_json(cp_ws)
@@ -226,6 +242,7 @@ async def test_subsequent_meter_values_forwarded(relay_harness):
         subprotocols=[OCPP_SUBPROTOCOL],
     ) as cp_ws:
         await asyncio.wait_for(cpms_ready.wait(), timeout=3.0)
+        await _consume_boot_trigger(cp_ws)
         await cp_ws.send(json.dumps(STATUS_NOTIFICATION))
 
         trigger = await _recv_json(cp_ws)

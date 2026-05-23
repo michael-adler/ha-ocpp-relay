@@ -288,8 +288,13 @@ async def test_cli_relay_routes_cp_and_cpms_messages_and_snoops_all(tmp_path, re
         async def recv_cp_traffic(cp_id: str) -> None:
             await traffic_start.wait()
             cp_ws = cp_ws_by_id[cp_id]
-            for _ in range(EFFECTIVE_MESSAGES_PER_DIRECTION):
+            while len(cp_received[cp_id]) < EFFECTIVE_MESSAGES_PER_DIRECTION:
                 packet = json.loads(await asyncio.wait_for(cp_ws.recv(), timeout=5.0))
+                # Skip relay-injected frames (boot trigger, MeterValues trigger, etc.)
+                # which the relay sends with its own "relay-*" message IDs.
+                if isinstance(packet, list) and len(packet) >= 2 and str(packet[1]).startswith("relay-"):
+                    _verbose_log(f"[CP recv-skip relay] cp_id={cp_id} packet={packet!r}")
+                    continue
                 cp_received[cp_id].append(packet)
                 _verbose_log(f"[CP recv] cp_id={cp_id} packet={packet!r}")
 
