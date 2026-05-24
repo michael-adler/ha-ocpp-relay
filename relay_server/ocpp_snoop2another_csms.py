@@ -69,6 +69,15 @@ new CALL with a fresh message ID.  This allows a secondary CSMS that joined
 mid-session to learn the CP's identity without waiting for the CP to reboot.
 If no cached ``BootNotification`` is available the request is left unanswered.
 
+``TriggerMessage(requestedMessage=StatusNotification)``: the most recent
+``StatusNotification`` seen from the CP is cached per connector ID.  If the
+request includes ``connectorId=0`` (or omits ``connectorId``), all cached
+connector statuses are re-sent as individual CALLs with fresh message IDs and
+the request is accepted.  If ``connectorId`` is greater than 0, only the
+cached status for that connector is re-sent.  If no cached status is available
+the request is left unanswered.  ``StatusNotification`` CALLs from the CP
+continue to be forwarded normally in addition to being cached.
+
 CALLRESULT and CALLERROR frames sent by the secondary CSMS are discarded,
 except for the ``BootNotificationResponse`` (identified by message ID) which
 is inspected to extract the ``heartbeatInterval`` field.  This also covers
@@ -146,8 +155,8 @@ class _CPState:
     send_queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=200))
     csms_task: Optional[asyncio.Task] = None
     heartbeat_interval: float = _HEARTBEAT_DEFAULT
-    boot_msg_id: Optional[str] = None  # msg_id of the forwarded BootNotification CALL
-    boot_notification: Optional[list] = None  # last CP BootNotification CALL frame
+    boot_msg_id: Optional[str] = None
+    packet_cache: dict[str, list] = field(default_factory=dict)  # "BootNotification" or "StatusNotification:{id}" -> CALL frame
 
 
 class _Forwarder:
@@ -259,7 +268,14 @@ class _Forwarder:
                 self._log.debug("Queued %s id=%s from %s", action, payload[1], cp_id)
                 if action == "BootNotification":
                     state.boot_msg_id = payload[1]
-                    state.boot_notification = payload
+                    state.packet_cache["BootNotification"] = payload
+                elif action == "StatusNotification" and len(payload) > 3 and isinstance(payload[3], dict):
+                    sn = payload[3]
+                    if state.protocol and state.protocol.startswith("OCPP2"):
+                        connector_id = sn.get("evseId", 0)
+                    else:
+                        connector_id = sn.get("connectorId", 0)
+                    state.packet_cache[f"StatusNotification:{connector_id}"] = payload
             except asyncio.QueueFull:
                 self._log.warning("Queue full for %s, dropping %s", cp_id, action)
 
@@ -274,7 +290,7 @@ class _Forwarder:
             state.send_queue.get_nowait()
         state.boot_msg_id = None
         state.heartbeat_interval = _HEARTBEAT_DEFAULT
-        state.boot_notification = None
+        state.packet_cache = {}
         state.csms_task = asyncio.create_task(
             self._csms_loop(cp_id), name=f"csms-{cp_id}"
         )
@@ -433,35 +449,76 @@ class _Forwarder:
         """Handle a TriggerMessage CALL from the secondary CSMS.
 
         TriggerMessage(BootNotification): if a cached BootNotification is available,
-        accept the request and re-send it with a fresh message ID.  All other
-        requestedMessage values are left unanswered (the CP will eventually send
-        the requested data to the primary CSMS and it will be forwarded here).
+        accept the request and re-send it with a fresh message ID.
+
+        TriggerMessage(StatusNotification): if cached statuses are available, accept
+        the request and re-send each matching status with a fresh message ID.
+        connectorId=0 (or absent) sends all known connector statuses.
+
+        All other requestedMessage values are left unanswered.
         """
         payload = frame[3] if len(frame) > 3 else {}
         requested = payload.get("requestedMessage") if isinstance(payload, dict) else None
-        if requested != "BootNotification":
+
+        if requested == "BootNotification":
+            state = self._cp.get(cp_id)
+            if state is None or state.packet_cache.get("BootNotification") is None:
+                self._log.debug(
+                    "CSMS TriggerMessage(BootNotification) for %s: no cached notification, leaving unanswered", cp_id
+                )
+                return
+            try:
+                await ws.send(json.dumps([_MSG_CALLRESULT, msg_id, {"status": "Accepted"}]))
+            except Exception as err:
+                self._log.error("CSMS reply error for %s: %s", cp_id, err)
+                return
+            new_id = str(uuid.uuid4())
+            boot_frame = list(state.packet_cache["BootNotification"])
+            boot_frame[1] = new_id
+            try:
+                state.send_queue.put_nowait(json.dumps(boot_frame))
+                state.boot_msg_id = new_id
+                self._log.debug("Queued triggered BootNotification for %s id=%s", cp_id, new_id)
+            except asyncio.QueueFull:
+                self._log.warning("Queue full for %s, dropping triggered BootNotification", cp_id)
+
+        elif requested == "StatusNotification":
+            state = self._cp.get(cp_id)
+            if state is None:
+                return
+            if state.protocol and state.protocol.startswith("OCPP2"):
+                evse = payload.get("evse") if isinstance(payload, dict) else None
+                connector_id = evse.get("id", 0) if isinstance(evse, dict) else 0
+            else:
+                connector_id = payload.get("connectorId", 0) if isinstance(payload, dict) else 0
+            if connector_id == 0:
+                frames_to_send = [v for k, v in state.packet_cache.items() if k.startswith("StatusNotification:")]
+            else:
+                cached = state.packet_cache.get(f"StatusNotification:{connector_id}")
+                frames_to_send = [cached] if cached is not None else []
+            if not frames_to_send:
+                self._log.debug(
+                    "CSMS TriggerMessage(StatusNotification, connectorId=%s) for %s: no cached status, leaving unanswered",
+                    connector_id, cp_id,
+                )
+                return
+            try:
+                await ws.send(json.dumps([_MSG_CALLRESULT, msg_id, {"status": "Accepted"}]))
+            except Exception as err:
+                self._log.error("CSMS reply error for %s: %s", cp_id, err)
+                return
+            for status_frame in frames_to_send:
+                new_id = str(uuid.uuid4())
+                new_frame = list(status_frame)
+                new_frame[1] = new_id
+                try:
+                    state.send_queue.put_nowait(json.dumps(new_frame))
+                    self._log.debug("Queued triggered StatusNotification for %s id=%s", cp_id, new_id)
+                except asyncio.QueueFull:
+                    self._log.warning("Queue full for %s, dropping triggered StatusNotification", cp_id)
+
+        else:
             self._log.debug("CSMS CALL TriggerMessage(%s) for %s, no response (waiting for CP)", requested, cp_id)
-            return
-        state = self._cp.get(cp_id)
-        if state is None or state.boot_notification is None:
-            self._log.debug(
-                "CSMS TriggerMessage(BootNotification) for %s: no cached notification, leaving unanswered", cp_id
-            )
-            return
-        try:
-            await ws.send(json.dumps([_MSG_CALLRESULT, msg_id, {"status": "Accepted"}]))
-        except Exception as err:
-            self._log.error("CSMS reply error for %s: %s", cp_id, err)
-            return
-        new_id = str(uuid.uuid4())
-        boot_frame = list(state.boot_notification)
-        boot_frame[1] = new_id
-        try:
-            state.send_queue.put_nowait(json.dumps(boot_frame))
-            state.boot_msg_id = new_id
-            self._log.debug("Queued triggered BootNotification for %s id=%s", cp_id, new_id)
-        except asyncio.QueueFull:
-            self._log.warning("Queue full for %s, dropping triggered BootNotification", cp_id)
 
     @staticmethod
     def _synthesize_response(action: str, msg_id: str) -> list | None:
