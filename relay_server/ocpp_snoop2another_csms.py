@@ -139,6 +139,144 @@ def _describe_frame(frame) -> str:
         return f"CALLERROR {code} id={short_id}"
     return f"type={msg_type} id={short_id}"
 
+def _call_detail(action: str, payload) -> str:
+    """Return a short summary of key CALL payload fields for verbose logging."""
+    if not isinstance(payload, dict):
+        return ""
+
+    if action == "GetConfiguration":  # OCPP 1.6
+        keys = payload.get("key")
+        return f"key={keys}" if keys else "key=* (all)"
+
+    if action == "ChangeConfiguration":  # OCPP 1.6
+        return f"key={payload.get('key')!r} value={payload.get('value')!r}"
+
+    if action == "GetVariables":  # OCPP 2.0.1
+        data = payload.get("getVariableData", [])
+        items = [
+            f"{d.get('component', {}).get('name', '?')}/{d.get('variable', {}).get('name', '?')}"
+            for d in data[:5]
+        ]
+        suffix = f" (+{len(data) - 5} more)" if len(data) > 5 else ""
+        return f"variables=[{', '.join(items)}{suffix}]"
+
+    if action == "SetVariables":  # OCPP 2.0.1
+        data = payload.get("setVariableData", [])
+        items = [
+            f"{d.get('component', {}).get('name', '?')}/{d.get('variable', {}).get('name', '?')}"
+            f"={d.get('attributeValue', '?')!r}"
+            for d in data[:5]
+        ]
+        suffix = f" (+{len(data) - 5} more)" if len(data) > 5 else ""
+        return f"variables=[{', '.join(items)}{suffix}]"
+
+    if action == "GetBaseReport":  # OCPP 2.0.1
+        return f"reportBase={payload.get('reportBase')!r} requestId={payload.get('requestId')}"
+
+    if action == "TriggerMessage":
+        parts = [f"requestedMessage={payload.get('requestedMessage')!r}"]
+        if "connectorId" in payload:
+            parts.append(f"connector={payload['connectorId']}")
+        if "evse" in payload:
+            parts.append(f"evse={payload['evse']}")
+        return " ".join(parts)
+
+    if action == "Reset":
+        parts = [f"type={payload.get('type')!r}"]
+        if "evseId" in payload:
+            parts.append(f"evse={payload['evseId']}")
+        return " ".join(parts)
+
+    if action == "RemoteStartTransaction":  # OCPP 1.6
+        parts = []
+        if "connectorId" in payload:
+            parts.append(f"connector={payload['connectorId']}")
+        if "idTag" in payload:
+            parts.append(f"idTag={payload['idTag']!r}")
+        return " ".join(parts)
+
+    if action == "RequestStartTransaction":  # OCPP 2.0.1
+        parts = []
+        if "evseId" in payload:
+            parts.append(f"evse={payload['evseId']}")
+        tok = payload.get("idToken", {})
+        if isinstance(tok, dict) and tok.get("idToken"):
+            parts.append(f"idToken={tok['idToken']!r} ({tok.get('type')})")
+        return " ".join(parts)
+
+    if action in ("RemoteStopTransaction", "RequestStopTransaction"):
+        return f"transactionId={payload.get('transactionId')}"
+
+    if action == "UnlockConnector":  # OCPP 1.6
+        return f"connector={payload.get('connectorId')}"
+
+    if action == "ChangeAvailability":
+        parts = []
+        if "connectorId" in payload:  # OCPP 1.6
+            parts.append(f"connector={payload['connectorId']}")
+            parts.append(f"type={payload.get('type')!r}")
+        else:  # OCPP 2.0.1
+            if "evse" in payload:
+                parts.append(f"evse={payload['evse']}")
+            if "operationalStatus" in payload:
+                parts.append(f"status={payload['operationalStatus']!r}")
+        return " ".join(parts)
+
+    if action == "SetChargingProfile":
+        parts = []
+        if "connectorId" in payload:
+            parts.append(f"connector={payload['connectorId']}")
+        if "evseId" in payload:
+            parts.append(f"evse={payload['evseId']}")
+        profile = payload.get("csChargingProfiles") or payload.get("chargingProfile") or {}
+        if isinstance(profile, dict) and "chargingProfilePurpose" in profile:
+            parts.append(f"purpose={profile['chargingProfilePurpose']!r}")
+        return " ".join(parts)
+
+    if action == "ReserveNow":
+        parts = []
+        if "connectorId" in payload:
+            parts.append(f"connector={payload['connectorId']}")
+        if "idTag" in payload:
+            parts.append(f"idTag={payload['idTag']!r}")
+        if "reservationId" in payload:
+            parts.append(f"reservationId={payload['reservationId']}")
+        return " ".join(parts)
+
+    if action == "CancelReservation":
+        return f"reservationId={payload.get('reservationId')}"
+
+    if action == "SendLocalList":
+        lst = payload.get("localAuthorizationList", [])
+        return (
+            f"version={payload.get('listVersion')} "
+            f"type={payload.get('updateType')!r} "
+            f"entries={len(lst)}"
+        )
+
+    if action == "DataTransfer":
+        parts = [f"vendor={payload.get('vendorId')!r}"]
+        if "messageId" in payload:
+            parts.append(f"messageId={payload['messageId']!r}")
+        return " ".join(parts)
+
+    if action == "GetDiagnostics":
+        return f"location={payload.get('location')!r}"
+
+    if action == "UpdateFirmware":
+        loc = payload.get("location") or (payload.get("firmware") or {}).get("location")
+        if loc:
+            return f"location={loc!r}"
+        if "requestId" in payload:
+            return f"requestId={payload['requestId']}"
+        return ""
+
+    if action == "GetLog":
+        return f"logType={payload.get('logType')!r} requestId={payload.get('requestId')}"
+
+    return ""
+
+
 _CSMS_RECONNECT_MIN = 1.0     # initial reconnect delay in seconds
 _CSMS_RECONNECT_MAX = 30.0    # maximum reconnect delay in seconds
 _HEARTBEAT_DEFAULT = 300.0    # heartbeat interval until BootNotificationResponse arrives
@@ -413,7 +551,12 @@ class _Forwarder:
                 continue
             msg_type = frame[0]
             msg_id = frame[1]
-            self._log.debug("← secondary [%s]: %s", cp_id, _describe_frame(frame))
+            if msg_type == _MSG_CALL and len(frame) > 2:
+                detail = _call_detail(frame[2], frame[3] if len(frame) > 3 else {})
+                suffix = f" — {detail}" if detail else ""
+                self._log.debug("← secondary [%s]: %s%s", cp_id, _describe_frame(frame), suffix)
+            else:
+                self._log.debug("← secondary [%s]: %s", cp_id, _describe_frame(frame))
             if msg_type == _MSG_CALL:
                 action = frame[2] if len(frame) > 2 else ""
                 if action == "TriggerMessage":
