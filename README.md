@@ -13,19 +13,17 @@ The provided HACS integration monitors OCPP messages and maps them to Home Assis
 
 ## HACS installation
 
-**This integration is not in the official HACS list. You must add it as a custom repository before installation:**
+This integration is part of the HACS default repository list:
 
-1. In Home Assistant, open HACS → Integrations.
-2. Click the three dots (⋮) in the top right and select **Custom repositories**.
-3. Add this repository URL: `https://github.com/michael-adler/ha-ocpp-relay` as type **Integration**.
-4. After adding, search for **OCPP Relay** in HACS and download it.
-5. Restart Home Assistant.
+1. In Home Assistant, open HACS from the sidebar.
+2. Search for **OCPP Relay** (optionally filter by Type: Integration) and click Download.
+3. Restart Home Assistant. HACS will request a restart.
 
-**Quick install (after adding as custom repo):**
+After downloading via HACS, add the integration:
 
-[![Add to HACS](https://img.shields.io/badge/HACS-Add%20Integration-blue?logo=home-assistant&style=for-the-badge)](https://my.home-assistant.io/redirect/integration/?domain=ha_ocpp_relay)
+[![Add OCPP Relay integration](https://img.shields.io/badge/Home%20Assistant-Add%20Integration-blue?logo=home-assistant&style=for-the-badge)](https://my.home-assistant.io/redirect/integration/?domain=ha_ocpp_relay)
 
-1. Click the badge above to open the add integration dialog directly in your Home Assistant instance or, in Home Assistant, go to [Settings → Devices & Services → Add Integration](https://my.home-assistant.io/redirect/integration/?domain=ha_ocpp_relay) and search for **HA OCPP Relay**.
+1. Click the badge above to open the add integration dialog directly in your Home Assistant instance or, in Home Assistant, go to [Settings → Devices & Services → Add Integration](https://my.home-assistant.io/redirect/integration/?domain=ha_ocpp_relay) and search for **OCPP Relay**.
 2. Follow the prompts to configure the integration.
 3. Configure relay settings in the integration UI:
 	- `Use local relay`: Whether Home Assistant should run the relay process. Most users should leave this enabled.
