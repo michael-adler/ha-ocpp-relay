@@ -130,6 +130,7 @@ class OCPPFilter:
         location: str,
         value,
         unit: str,
+        phase: str | None = None,
     ) -> OCPPSensorData | None:
         """Build one normalized measurement sensor from a sampled value row."""
         value_type = (value_type or "Energy.Active.Import.Register").replace(".", "-")
@@ -151,6 +152,8 @@ class OCPPFilter:
 
         location = location or "Outlet"
         topic = f"{evse_id}/{location}/{value_type}"
+        if phase:
+            topic = f"{topic}/{phase}"
         unique_id = f"OCPP_{cp_id}_{topic}".replace("/", "_")
 
         # Map W/Wh to kW/kWh, convert value, update unit and name
@@ -168,9 +171,12 @@ class OCPPFilter:
                 pass
 
         if evse_id is None:
-            name = f"{value_type.replace('-', ' ')} {location} CP {cp_id}"
+            name = f"{value_type.replace('-', ' ')} {location}"
         else:
-            name = f"C{evse_id} {value_type.replace('-', ' ')} {location} CP {cp_id}"
+            name = f"C{evse_id} {value_type.replace('-', ' ')} {location}"
+        if phase:
+            name = f"{name} {phase}"
+        name = f"{name} CP {cp_id}"
 
         return OCPPSensorData(
             cp_id=cp_id,
@@ -264,6 +270,11 @@ class OCPPFilter:
                 if not isinstance(sampled_values, list):
                     self._logger.warning(f"Missing or invalid 'sampledValue' in meterValue: {meter_value!r} (cp_id={cp_id})")
                     continue
+                # Only add phase to the sensor identity if more than one phase is present
+                phases_present = {
+                    sv.get("phase") for sv in sampled_values if isinstance(sv, dict) and sv.get("phase")
+                }
+                multi_phase = len(phases_present) > 1
                 for sampled_value in sampled_values:
                     if not isinstance(sampled_value, dict):
                         self._logger.warning(f"Invalid sampledValue entry: {sampled_value!r} (cp_id={cp_id})")
@@ -296,6 +307,7 @@ class OCPPFilter:
                         sampled_value.get("location"),
                         value,
                         unit,
+                        sampled_value.get("phase") if multi_phase else None,
                     )
                     if sensor:
                         messages.append(sensor)
@@ -385,6 +397,11 @@ class OCPPFilter:
                 if not isinstance(sampled_values, list):
                     self._logger.warning(f"Missing or invalid 'sampledValue' in meterValue: {meter_value!r} (cp_id={cp_id})")
                     continue
+                # Only add phase to the sensor identity if more than one phase is present
+                phases_present = {
+                    sv.get("phase") for sv in sampled_values if isinstance(sv, dict) and sv.get("phase")
+                }
+                multi_phase = len(phases_present) > 1
                 for sampled_value in sampled_values:
                     if not isinstance(sampled_value, dict):
                         self._logger.warning(f"Invalid sampledValue entry: {sampled_value!r} (cp_id={cp_id})")
@@ -427,6 +444,7 @@ class OCPPFilter:
                         sampled_value.get("location"),
                         value,
                         unit,
+                        sampled_value.get("phase") if multi_phase else None,
                     )
                     if sensor:
                         messages.append(sensor)
