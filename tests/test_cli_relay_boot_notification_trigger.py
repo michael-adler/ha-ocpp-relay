@@ -76,10 +76,11 @@ async def _make_harness(boot_trigger_deadline):
         "cpms_ready": cpms_ready,
         "cpms_ws_holder": cpms_ws_holder,
     }
-    return harness, servers
+    return harness, servers, snoop
 
 
-async def _teardown_harness(servers):
+async def _teardown_harness(servers, snoop):
+    await snoop.stop()
     for server in servers:
         server.close()
         await server.wait_closed()
@@ -88,17 +89,17 @@ async def _teardown_harness(servers):
 @pytest.fixture
 async def relay_harness():
     """Relay with near-zero deadline: trigger fires without polling the cache."""
-    harness, servers = await _make_harness(boot_trigger_deadline=(0.0, 0.05))
+    harness, servers, snoop = await _make_harness(boot_trigger_deadline=(0.0, 0.05))
     yield harness
-    await _teardown_harness(servers)
+    await _teardown_harness(servers, snoop)
 
 
 @pytest.fixture
 async def relay_harness_polling():
     """Relay with a fixed 0.1 s deadline so the polling loop actually executes."""
-    harness, servers = await _make_harness(boot_trigger_deadline=(0.1, 0.1))
+    harness, servers, snoop = await _make_harness(boot_trigger_deadline=(0.1, 0.1))
     yield harness
-    await _teardown_harness(servers)
+    await _teardown_harness(servers, snoop)
 
 
 @pytest.mark.asyncio

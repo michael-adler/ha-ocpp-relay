@@ -68,10 +68,12 @@ async def _make_harness():
         "relay": relay,
         "cpms_ready": cpms_ready,
         "servers": (snoop_server, relay_server, cpms_server),
+        "snoop": snoop,
     }
 
 
 async def _teardown(h):
+    await h["snoop"].stop()
     for server in h["servers"]:
         server.close()
         await server.wait_closed()
