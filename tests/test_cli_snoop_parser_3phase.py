@@ -57,6 +57,67 @@ def test_3phase_meter_values_leaves_non_phase_measurand_name_unchanged():
     assert sensor.topic == "1/Outlet/Energy-Active-Import-Register"
 
 
+def test_start_transaction_creates_idtag_sensor():
+    """StartTransaction.req must produce an idTag sensor for its connector."""
+    parser = OCPPFilter()
+    msg = {
+        "event": "Message",
+        "sender": "CP",
+        "protocol": "ocpp1.6",
+        "cp_id": "ChargerSerialNr",
+        "payload": [2, "296", "StartTransaction", {"connectorId": 1, "idTag": "050CCD9E810000", "meterStart": 0, "timestamp": "2026-08-01T14:42:15"}],
+        "timestamp": "2026-08-01T12:42:16Z",
+    }
+
+    result = parser.filter(msg)
+    sensors = {s.unique_id: s for s in result}
+
+    unique_id = "OCPP_ChargerSerialNr_1_idtag"
+    assert unique_id in sensors
+    assert sensors[unique_id].value == "050CCD9E810000"
+    assert sensors[unique_id].name == "C1 Id Tag CP ChargerSerialNr"
+
+
+def test_stop_transaction_clears_idtag_sensor_to_unknown():
+    """Replaying the full 3-phase log (which now ends with StopTransaction) must
+    leave the idTag sensor's final value at None, i.e. HA's 'unknown' state."""
+    sensors = _load_sensors()
+
+    unique_id = "OCPP_ChargerSerialNr_1_idtag"
+    assert unique_id in sensors
+    assert sensors[unique_id].value is None
+
+
+def test_cp_without_start_transaction_has_no_idtag_sensor():
+    """A CP that never sends StartTransaction must never get an idTag sensor."""
+    parser = OCPPFilter()
+    cp_id = "NoTxCP"
+
+    heartbeat = parser.filter(
+        {
+            "event": "Message",
+            "sender": "CP",
+            "protocol": "ocpp1.6",
+            "cp_id": cp_id,
+            "payload": [2, "1", "Heartbeat", {}],
+            "timestamp": "2026-08-01T12:00:00Z",
+        }
+    )
+    status = parser.filter(
+        {
+            "event": "Message",
+            "sender": "CP",
+            "protocol": "ocpp1.6",
+            "cp_id": cp_id,
+            "payload": [2, "2", "StatusNotification", {"connectorId": 1, "errorCode": "NoError", "status": "Available"}],
+            "timestamp": "2026-08-01T12:00:10Z",
+        }
+    )
+
+    all_sensors = list(heartbeat or []) + list(status or [])
+    assert not any(s.unique_id.endswith("_idtag") for s in all_sensors)
+
+
 def test_single_phase_meter_values_keep_current_naming():
     """A single-phase sample (only one distinct phase value) must not get an L<phase> suffix."""
     parser = OCPPFilter()

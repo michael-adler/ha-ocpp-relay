@@ -17,6 +17,10 @@ class OCPPFilter:
         """Initialize the instance state."""
         self._logger = logging.getLogger(__name__)
         self._manufacturer: dict[str, object | str | None] = {}
+        # Maps (cp_id, transaction_id) -> connector/evse id so a StopTransaction
+        # or TransactionEvent(Ended), which may not carry the connector itself,
+        # can still find the idTag sensor to clear.
+        self._transaction_connector: dict[tuple[str, Any], Any] = {}
 
     def _cached_manufacturer(self, cp_id: str) -> str | None:
         """Return normalized cache value for sensor payloads."""
@@ -43,6 +47,9 @@ class OCPPFilter:
         if event in ("Connection", "Disconnection"):
             cp_id = self._field(msg, "cp_id") or "unknown"
             self._manufacturer.pop(cp_id, None)
+            self._transaction_connector = {
+                key: value for key, value in self._transaction_connector.items() if key[0] != cp_id
+            }
             return None
 
         if event != "Message":
@@ -191,6 +198,22 @@ class OCPPFilter:
             timestamp=timestamp,
         )
 
+    def _new_idtag_sensor(
+        self, cp_id: str, timestamp: str, cable_id: Any, id_tag: str | None
+    ) -> OCPPSensorData:
+        """Build the per-connector idTag sensor; id_tag=None clears it to HA's 'unknown' state."""
+        topic = f"{cable_id}/idtag"
+        unique_id = f"OCPP_{cp_id}_{cable_id}_idtag"
+        return OCPPSensorData(
+            cp_id=cp_id,
+            topic=topic,
+            unique_id=unique_id,
+            name=f"C{cable_id} Id Tag CP {cp_id}",
+            value=id_tag,
+            manufacturer=self._cached_manufacturer(cp_id),
+            timestamp=timestamp,
+        )
+
     def _filter_ocpp16(self, cp_id: str, timestamp: str, ocpp: list) -> list[OCPPSensorData] | None:
         """Parse OCPP 1.6 CALL payloads into normalized telemetry sensors."""
         action = ocpp[2]
@@ -251,6 +274,26 @@ class OCPPFilter:
                 )
             ]
 
+        if action == "StartTransaction":
+            connector_id = payload.get("connectorId")
+            id_tag = payload.get("idTag")
+            if connector_id is None or id_tag is None:
+                self._logger.warning(f"Missing 'connectorId' or 'idTag' in StartTransaction payload: {payload!r} (cp_id={cp_id})")
+                return None
+            return [self._new_idtag_sensor(cp_id, timestamp, connector_id, id_tag)]
+
+        if action == "StopTransaction":
+            # StopTransaction.req carries transactionId but not connectorId; the
+            # connector was learned earlier from StartTransaction/MeterValues.
+            transaction_id = payload.get("transactionId")
+            connector_id = self._transaction_connector.pop((cp_id, transaction_id), None)
+            if connector_id is None:
+                self._logger.warning(
+                    f"Unknown connector for StopTransaction transactionId={transaction_id!r} (cp_id={cp_id})"
+                )
+                return None
+            return [self._new_idtag_sensor(cp_id, timestamp, connector_id, None)]
+
         if action == "MeterValues":
             messages: list[OCPPSensorData] = []
             meter_values = payload.get("meterValue") or payload.get("meterValues")
@@ -258,6 +301,11 @@ class OCPPFilter:
                 self._logger.warning(f"Missing or invalid 'meterValue' in MeterValues payload: {payload!r} (cp_id={cp_id})")
                 return None
             connector_id = payload.get("connectorId")
+            transaction_id = payload.get("transactionId")
+            if connector_id is not None and transaction_id is not None:
+                # StartTransaction.req does not carry the CSMS-assigned transactionId,
+                # so learn the connector mapping here for later StopTransaction lookup.
+                self._transaction_connector[(cp_id, transaction_id)] = connector_id
             for meter_value in meter_values:
                 # Prefer per-sample timestamp when present
                 local_ts = meter_value.get("timestamp") if isinstance(meter_value, dict) else None
@@ -377,6 +425,39 @@ class OCPPFilter:
                     timestamp=timestamp,
                 )
             ]
+
+        if action == "TransactionEvent":
+            event_type = payload.get("eventType")
+            transaction_info = payload.get("transactionInfo") or {}
+            transaction_id = transaction_info.get("transactionId")
+            evse = payload.get("evse") or {}
+            connector_id = evse.get("id")
+            if connector_id is not None and transaction_id is not None:
+                self._transaction_connector[(cp_id, transaction_id)] = connector_id
+            elif connector_id is None and transaction_id is not None:
+                # evse is optional per spec; fall back to what Started/Updated taught us.
+                connector_id = self._transaction_connector.get((cp_id, transaction_id))
+
+            if event_type == "Started":
+                id_token = payload.get("idToken") or {}
+                id_tag = id_token.get("idToken")
+                if connector_id is None or id_tag is None:
+                    self._logger.warning(
+                        f"Missing 'evse.id' or 'idToken' in TransactionEvent(Started) payload: {payload!r} (cp_id={cp_id})"
+                    )
+                    return None
+                return [self._new_idtag_sensor(cp_id, timestamp, connector_id, id_tag)]
+
+            if event_type == "Ended":
+                self._transaction_connector.pop((cp_id, transaction_id), None)
+                if connector_id is None:
+                    self._logger.warning(
+                        f"Unknown connector for TransactionEvent(Ended) transactionId={transaction_id!r} (cp_id={cp_id})"
+                    )
+                    return None
+                return [self._new_idtag_sensor(cp_id, timestamp, connector_id, None)]
+
+            return None
 
         if action == "MeterValues":
             messages: list[OCPPSensorData] = []

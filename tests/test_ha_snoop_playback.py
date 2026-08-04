@@ -405,6 +405,12 @@ async def test_ha_integration_creates_3phase_sensors_from_snoop_playback(hass, t
         collapsed_id = f"OCPP_ChargerSerialNr_1_Outlet_{measurand_topic}"
         assert collapsed_id not in client.sensors, f"Unexpected collapsed sensor: {collapsed_id}"
 
+    # The log's StartTransaction created the idTag sensor and its trailing
+    # StopTransaction must have cleared it back to HA's "unknown" state (None).
+    idtag_uid = "OCPP_ChargerSerialNr_1_idtag"
+    assert idtag_uid in client.sensors, f"Missing idTag sensor {idtag_uid}"
+    assert client.sensors[idtag_uid].value is None
+
     await client.async_stop()
 
     await hass.config_entries.async_unload(entry_id)
