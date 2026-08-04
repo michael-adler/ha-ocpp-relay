@@ -85,6 +85,7 @@ async def relay_harness():
         "cpms_ws_holder": cpms_ws_holder,
     }
 
+    await snoop.stop()
     snoop_server.close()
     await snoop_server.wait_closed()
     relay_server.close()

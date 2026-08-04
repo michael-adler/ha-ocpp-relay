@@ -24,12 +24,20 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.14'
+
+      - name: Pick pytest-homeassistant-custom-component version with a stable HA core
+        id: ha_test_version
+        run: |
+          version=$(python3 .github/scripts/pick_ha_test_version.py)
+          echo "Selected pytest-homeassistant-custom-component==$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Install package and test deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install '.[dev]'
+          python -m pip install '.[dev,ha-test]' \
+            "pytest-homeassistant-custom-component==${{ steps.ha_test_version.outputs.version }}"
 
       - name: Wait for Mosquitto on port 8583
         run: |
@@ -39,4 +47,4 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest -q
+          pytest -q -rP

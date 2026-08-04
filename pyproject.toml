@@ -20,6 +20,9 @@ dev = [
   "pytest",
   "pytest-asyncio",
 ]
+ha-test = [
+  "pytest-homeassistant-custom-component",
+]
 
 [project.scripts]
 ocpp-relay-server = "relay_server.ocpp_relay_server:main"
