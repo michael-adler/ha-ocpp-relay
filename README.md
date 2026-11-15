@@ -53,7 +53,12 @@ When something goes wrong, a debug log is the most useful thing to attach to a [
 1. Go to [Settings → Devices & Services](https://my.home-assistant.io/redirect/integrations/) and open **OCPP Relay**.
 2. Open the three-dot menu and select **Enable debug logging**.
 3. Reproduce the problem. For connection problems, let the log run from the charger connecting until it disconnects, ideally covering several cycles.
-4. Return to the same page and select **Disable debug logging**. Home Assistant downloads the log file to your browser.
+4. While debug logging is still on, select **Show logs** in the **Debug logging enabled** banner on the same page, then select **Download**. The file contains only the OCPP Relay entries.
+5. Select **Disable debug logging**.
+
+Submit the file from step 4. When you turn off debug logging in step 5, Home Assistant also downloads a log. That log contains entries from **all of Home Assistant**, not just OCPP Relay, and so includes much more information than the file from step 4. Entries from other integrations are not masked and may contain private details about your home.
+
+**Show logs** requires Home Assistant 2026.11 or later, and it keeps only the most recent 5,000 OCPP Relay lines. Use the full log from step 5 only if your Home Assistant is older, or if the problem started longer ago than that. Review it carefully before posting.
 
 Debug logs grow quickly, since chargers send meter readings frequently. Turn debug logging off once you have captured the problem.
 
