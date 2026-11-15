@@ -44,6 +44,48 @@ After you have set up the OCPP relay integration, update your EV charger so that
 
 Most chargers will append the ID of the charger automatically. Ensure that the URL that eventually reaches the OCPP relay ends with the ID.
 
+## Debug logging and bug reports
+
+When something goes wrong, a debug log is the most useful thing to attach to a [bug report](https://github.com/michael-adler/ha-ocpp-relay/issues). With debug logging enabled, the integration logs every OCPP message passing through the relay, so no extra tools are needed.
+
+### Capturing a log in Home Assistant
+
+1. Go to [Settings → Devices & Services](https://my.home-assistant.io/redirect/integrations/) and open **OCPP Relay**.
+2. Open the three-dot menu and select **Enable debug logging**.
+3. Reproduce the problem. For connection problems, let the log run from the charger connecting until it disconnects, ideally covering several cycles.
+4. Return to the same page and select **Disable debug logging**. Home Assistant downloads the log file to your browser.
+
+Debug logs grow quickly, since chargers send meter readings frequently. Turn debug logging off once you have captured the problem.
+
+### Privacy: review before posting
+
+Bug reports on GitHub are public. The integration automatically masks personal identifiers in its log output:
+
+- **idTags** (RFID card numbers and similar user tokens) are replaced with a code such as `anon-tag-9ba6`.
+- **Charger identifiers** are replaced with a code such as `anon-id-65a1`. This covers the charge point ID, which is often the charger's serial number, wherever it appears, including in URLs, sensor IDs and MQTT topics. It also covers the serial-number and SIM card (ICCID, IMSI) fields of BootNotification messages.
+- **Credentials embedded in URLs**, such as `wss://user:password@host/...`, are replaced with `***`.
+
+The same value always produces the same code, so two cards or two chargers can still be told apart in the log, but a code cannot be turned back into the original value.
+
+Review the log before posting, and replace anything you consider private. For most users, the automatic obfuscation is sufficient.
+
+### What to include in a report
+
+- Home Assistant version and OCPP Relay version.
+- Charger make, model, firmware version and OCPP version.
+- Which CPMS the relay connects to.
+- What you expected and what happened, with approximate times so the matching part of the log can be found.
+- The debug log, covering the time of the problem.
+
+### Command-line tools
+
+The command-line tools enable debug logging with `-v`. Add `--anon` to mask idTags, charger identifiers and URL credentials in all output, including output from the WebSocket library. Long messages that the WebSocket library shortens in its log are cut down to their message type and action, because masking can't be done reliably on a shortened message. Unlike the Home Assistant integration, the command-line tools mask only when `--anon` is given. With `--anon`, `ocpp-snoop-recorder` also masks the recording it writes, so the file can be attached to a report. A masked recording can still be replayed with `ocpp-playback-server`, since each charger keeps a consistent masked ID:
+
+```bash
+ocpp-relay-server --cpms wss://<actual-ocpp-server>/ws/webSocket -v --anon
+ocpp-snoop-recorder --snoop-socket ws://127.0.0.1:8501/ --output output.json --anon
+```
+
 ## Repository layout
 
 - `custom_components/ha_ocpp_relay/`: HACS custom integration.

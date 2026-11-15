@@ -17,6 +17,7 @@ from urllib.parse import urlsplit, urlunsplit
 import websockets
 import websockets.exceptions
 
+from ..shared.anonymize import register_identifier
 from ..shared.models import MessageData
 
 # Maximum number of pending snoop/MQTT messages before older ones are dropped.
@@ -287,7 +288,7 @@ class OCPPRelay:
         payload = json.dumps([2, msg_id, "TriggerMessage", {"requestedMessage": "BootNotification"}])
         try:
             await cp_ws.send(payload)
-            self._logger.debug("Sent TriggerMessage(BootNotification) to CP %s (id=%s)", cp_id, msg_id)
+            self._logger.debug("Sent TriggerMessage(BootNotification) to CP %s: %s", cp_id, payload)
         except Exception as err:  # noqa: BLE001
             state["boot_trigger_ids"].discard(msg_id)
             self._logger.warning("Failed to send TriggerMessage(BootNotification) to CP %s: %s", cp_id, err)
@@ -300,7 +301,7 @@ class OCPPRelay:
         payload = json.dumps([2, msg_id, "TriggerMessage", {"requestedMessage": "MeterValues"}])
         try:
             await cp_ws.send(payload)
-            self._logger.debug("Sent TriggerMessage to CP %s (id=%s)", cp_id, msg_id)
+            self._logger.debug("Sent TriggerMessage to CP %s: %s", cp_id, payload)
         except Exception as err:  # noqa: BLE001
             state["pending_ids"].discard(msg_id)
             self._logger.warning("Failed to send TriggerMessage to CP %s: %s", cp_id, err)
@@ -337,7 +338,9 @@ class OCPPRelay:
         # The CPMS never issued this request so it must not see the response.
         if msg_type in (3, 4) and state is not None and msg_id in state.get("boot_trigger_ids", set()):
             state["boot_trigger_ids"].discard(msg_id)
-            self._logger.debug("Dropped boot TriggerMessage response from CP %s", cp_id)
+            self._logger.debug(
+                "Dropped boot TriggerMessage response from CP %s: %s", cp_id, json.dumps(json_message)
+            )
             return False, False
 
         # The relay sends TriggerMessage under its own message IDs, which the CPMS has
@@ -351,11 +354,15 @@ class OCPPRelay:
             if isinstance(result, dict) and result.get("status") == "Accepted":
                 state["awaiting"] = True
                 self._logger.debug(
-                    "TriggerMessage accepted by CP %s; will capture next MeterValues", cp_id
+                    "TriggerMessage accepted by CP %s; will capture next MeterValues: %s",
+                    cp_id,
+                    json.dumps(json_message),
                 )
             else:
                 self._logger.debug(
-                    "TriggerMessage not accepted by CP %s (result=%r)", cp_id, result
+                    "TriggerMessage not accepted by CP %s (dropped): %s",
+                    cp_id,
+                    json.dumps(json_message),
                 )
             return False, False
 
@@ -383,6 +390,9 @@ class OCPPRelay:
         """Bridge one charge point connection to the configured CSMS peer."""
         # The CP identifier is encoded in the websocket URL path.
         charge_point_id = cp_ws.request.path.strip("/")
+        # Register before the first log line that mentions the ID, so masked
+        # logs never show it.  The ID is often the charger's serial number.
+        register_identifier(charge_point_id)
         if not charge_point_id:
             self._logger.error(
                 "Charge point connected with empty path; closing connection (code=4001)."
@@ -538,9 +548,12 @@ class OCPPRelay:
         while True:
             try:
                 message = await source_ws.recv()
-            except websockets.exceptions.ConnectionClosed:
+            except websockets.exceptions.ConnectionClosed as err:
+                # The close details distinguish a peer-initiated close (received
+                # code), a relay-initiated keepalive timeout (sent 1011) and an
+                # abnormal TCP drop (no close frame, 1006).
                 self._logger.info(
-                    "Connection closed on %s side for CP %s", source_name, cp_id
+                    "Connection closed on %s side for CP %s: %s", source_name, cp_id, err
                 )
                 return
 
@@ -603,16 +616,21 @@ class OCPPRelay:
             if should_forward:
                 try:
                     await target_ws.send(message)
-                except websockets.exceptions.ConnectionClosed:
+                except websockets.exceptions.ConnectionClosed as err:
                     self._logger.info(
-                        "Connection closed on %s side while relaying for CP %s", target_name, cp_id
+                        "Connection closed on %s side while relaying for CP %s: %s",
+                        target_name,
+                        cp_id,
+                        err,
                     )
                     return
 
-            msg_id = json_message[1]
             if should_forward:
+                # Log the raw frame so standard HA debug logging captures all
+                # relayed OCPP traffic without needing a snoop client.  idTags
+                # and charger identifiers are masked by the logging filter.
                 self._logger.debug(
-                    "Relayed message from %s to %s (%s)", source_name, target_name, msg_id
+                    "Relayed %s -> %s for CP %s: %s", source_name, target_name, cp_id, message
                 )
 
             if should_snoop:

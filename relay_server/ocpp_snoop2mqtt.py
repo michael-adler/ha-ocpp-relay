@@ -7,7 +7,7 @@ import logging
 
 from relay_server.common.ocppfilter import OCPPFilter
 from relay_server.common.ocppsnoop import receive_ocpp_snoop
-from relay_server.cli.common import apply_yaml_section_defaults, configure_logging
+from relay_server.cli.common import add_anon_argument, apply_yaml_section_defaults, configure_logging
 from relay_server.mqtt.mqttpublish import MQTTPublisher
 
 
@@ -63,6 +63,7 @@ Map a stream of OCPP messages to MQTT topics.
     )
 
     parser.add_argument("--syslog", action="store_true", help="Write logs to syslog instead of stdout")
+    add_anon_argument(parser)
 
     group = parser.add_mutually_exclusive_group()
     group.add_argument("-v", "--verbose", action="store_true", help="""Verbose output.""")
@@ -119,6 +120,7 @@ def main():
         verbose=args.verbose,
         quiet=args.quiet,
         use_syslog=args.syslog,
+        anon=args.anon,
     )
 
     try:

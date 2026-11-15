@@ -8,6 +8,7 @@ import logging
 
 import websockets
 
+from custom_components.ha_ocpp_relay.shared.anonymize import anonymize_payload
 from relay_server.cli.common import configure_logging
 
 
@@ -42,6 +43,14 @@ Record a stream of OCPP snoop messages to a file.
     group.add_argument("-v", "--verbose", action="store_true", help="Verbose output.")
     group.add_argument("-q", "--quiet", action="store_true", help="Reduce output.")
 
+    parser.add_argument(
+        "--anon", action="store_true",
+        help="""Mask idTags (RFID card numbers), charge point IDs, charger serial and SIM
+numbers in the recording and in all output. Each value is replaced with a short stable
+hash so different cards and chargers remain distinguishable.
+Use this for recordings that will be shared, e.g. attached to a bug report.""",
+    )
+
     return parser.parse_args()
 
 
@@ -55,6 +64,8 @@ async def receive_forever(args):
                 print("Connection established. Waiting for messages...")
                 async for message in websocket:
                     json_msg = json.loads(message)
+                    if args.anon:
+                        json_msg = anonymize_payload(json_msg)
                     print(f"Client receives: < {json.dumps(json_msg, indent=2)}")
                     outfile.write(json.dumps(json_msg) + "\n")
                     outfile.flush()
@@ -78,6 +89,7 @@ def main():
         verbose=args.verbose,
         quiet=args.quiet,
         use_syslog=False,
+        anon=args.anon,
     )
 
     try:

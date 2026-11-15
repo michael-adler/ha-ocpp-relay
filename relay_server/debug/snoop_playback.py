@@ -10,7 +10,7 @@ import json
 import sys
 from custom_components.ha_ocpp_relay.relay.core import SnoopWebSocketServer
 from custom_components.ha_ocpp_relay.shared.models import MessageData
-from relay_server.cli.common import configure_logging
+from relay_server.cli.common import add_anon_argument, configure_logging
 
 
 def parse_args():
@@ -24,6 +24,7 @@ def parse_args():
     group = parser.add_mutually_exclusive_group()
     group.add_argument("-v", "--verbose", action="store_true", help="Verbose output.")
     group.add_argument("-q", "--quiet", action="store_true", help="Reduce output.")
+    add_anon_argument(parser)
     return parser.parse_args()
 
 
@@ -95,6 +96,7 @@ def main():
         verbose=args.verbose,
         quiet=args.quiet,
         use_syslog=False,
+        anon=args.anon,
     )
     try:
         asyncio.run(main_async(args))

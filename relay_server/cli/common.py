@@ -11,6 +11,8 @@ from typing import Any
 
 import yaml
 
+from custom_components.ha_ocpp_relay.shared.anonymize import install_masking_on_handlers
+
 
 class WebSocketKeepaliveFilter(logging.Filter):
     """Drop noisy websocket ping/pong debug records while keeping other debug logs."""
@@ -96,8 +98,31 @@ def apply_yaml_section_defaults(
             parser.set_defaults(**{key: value})
 
 
-def configure_logging(*, app_name: str, verbose: bool, quiet: bool, use_syslog: bool) -> None:
-    """Configure consistent logging for relay_server command entrypoints."""
+def add_anon_argument(parser: argparse.ArgumentParser) -> None:
+    """Add the shared --anon option that masks idTags and charger identifiers in all output."""
+    parser.add_argument(
+        "--anon", action="store_true",
+        help="""Mask idTags (RFID card numbers), charge point IDs, charger serial and SIM
+numbers, and URL credentials in all log output. Each value is replaced with a short
+stable hash so different cards and chargers remain distinguishable.""",
+    )
+
+
+def configure_logging(
+    *, app_name: str, verbose: bool, quiet: bool, use_syslog: bool, anon: bool = False
+) -> None:
+    """Configure consistent logging for relay_server command entrypoints.
+
+    When *anon* is set, idTags, charger identifiers and URL credentials are
+    masked in every record written by the root handlers, including records from third-party libraries such as websockets.
+    """
+    _configure_handlers(app_name=app_name, verbose=verbose, quiet=quiet, use_syslog=use_syslog)
+    if anon:
+        install_masking_on_handlers()
+
+
+def _configure_handlers(*, app_name: str, verbose: bool, quiet: bool, use_syslog: bool) -> None:
+    """Install root handlers for stdout or syslog."""
     level = logging.DEBUG if verbose else logging.INFO
     if quiet:
         level = logging.WARNING

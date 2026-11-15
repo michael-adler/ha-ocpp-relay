@@ -11,6 +11,11 @@ from .const import (
     SKIP_NEXT_UPDATE_RELOAD,
     normalize_relay_config,
 )
+from .shared.anonymize import install_masking_on_loggers, package_logger_names
+
+# Logger names of every module in the integration, found at import time so the
+# directory scan stays off the event loop.
+_LOGGER_NAMES = package_logger_names(__name__, __path__)
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -62,6 +67,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     local mode, stores runtime objects in hass.data, and forwards setup to
     platform entities.
     """
+    # Always mask idTags (RFID card numbers), charge point IDs and other
+    # identifiers in this integration's log output.  Users share HA debug logs
+    # in public bug reports, and the relay logs every OCPP frame at debug level.  This is done here rather than at import so the
+    # standalone relay_server CLI, which imports this package, masks only when
+    # run with --anon.  Installing is idempotent across config entries.
+    install_masking_on_loggers(_LOGGER_NAMES)
     from .relay.local_relay_supervisor import LocalRelaySupervisor
     from .snoop.client import OCPPSnoopClient
 

@@ -12,6 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from ..const import CONF_SNOOP_SOCKET, DOMAIN, SIGNAL_NEW_SENSOR, SIGNAL_SENSOR_UPDATE
+from ..shared.anonymize import register_identifier
 from .models import OCPPSensorData
 from .parser import OCPPFilter
 
@@ -99,6 +100,11 @@ class OCPPSnoopClient:
         except json.JSONDecodeError:
             self._logger.debug("Skipping invalid JSON message")
             return
+
+        if isinstance(data, dict):
+            # With a remote relay, the snoop stream is where this process first
+            # learns each CP ID.  Register it so masked logs never show it.
+            register_identifier(data.get("cp_id"))
 
         if isinstance(data, dict) and data.get("event") == "Disconnection":
             cp_id = data.get("cp_id") or "unknown"

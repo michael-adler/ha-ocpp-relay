@@ -8,7 +8,7 @@ import ssl
 import sys
 
 from custom_components.ha_ocpp_relay.relay.core import OCPPRelay, SnoopWebSocketServer, SNOOP_QUEUE_MAXSIZE
-from relay_server.cli.common import apply_yaml_section_defaults, configure_logging
+from relay_server.cli.common import add_anon_argument, apply_yaml_section_defaults, configure_logging
 
 
 def parse_args():
@@ -56,6 +56,7 @@ uses a private or self-signed certificate authority."""
         "--syslog", action="store_true",
         help="""Write logs to syslog instead of stdout."""
     )
+    add_anon_argument(parser)
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "-v", "--verbose", action="store_true",
@@ -164,6 +165,7 @@ def main():
         verbose=args.verbose,
         quiet=args.quiet,
         use_syslog=args.syslog,
+        anon=args.anon,
     )
 
     try:
