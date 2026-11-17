@@ -24,6 +24,15 @@ from ..shared.models import MessageData
 # Prevents unbounded memory growth when consumers are slow or disconnected.
 SNOOP_QUEUE_MAXSIZE = 1000
 
+# WebSocket keepalive for charge point connections.  The relay pings each charge
+# point every CP_PING_INTERVAL seconds and closes the connection (code 1011) if no
+# pong arrives within CP_PING_TIMEOUT seconds.  The websockets default timeout of
+# 20 s drops chargers on short network outages, e.g. a Wi-Fi blip, that a CSMS
+# connection without pings would survive (issue #7).  Dead connections are still
+# detected, within about two minutes.
+CP_PING_INTERVAL = 20
+CP_PING_TIMEOUT = 120
+
 
 def basic_auth_header(username: str, password: str) -> tuple[str, str]:
     """Build an HTTP Basic auth header tuple for websocket upgrade requests."""
@@ -244,7 +253,15 @@ class OCPPRelay:
             self._csms_ssl_context = await loop.run_in_executor(
                 None, ssl.create_default_context
             )
-        server = await websockets.serve(self._on_connect, host, port, ssl=ssl_context, reuse_address=True)
+        server = await websockets.serve(
+            self._on_connect,
+            host,
+            port,
+            ssl=ssl_context,
+            reuse_address=True,
+            ping_interval=CP_PING_INTERVAL,
+            ping_timeout=CP_PING_TIMEOUT,
+        )
         self._logger.info("Relay server started on %s:%s", host, port)
         return server
 
